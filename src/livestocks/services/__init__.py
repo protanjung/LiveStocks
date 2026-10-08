@@ -1,4 +1,7 @@
-"""Application services: the background updater and (next) the forecast facade used by api and ui."""
+"""Application services that coordinate crawling and storage.
+Today this is the background Updater that keeps tracked tickers fresh.
+The api and ui layers should talk to this package, not to crawler or storage.
+"""
 
 from livestocks.services.updater import Crawler, Updater
 

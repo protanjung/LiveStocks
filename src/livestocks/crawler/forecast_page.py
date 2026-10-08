@@ -1,7 +1,6 @@
 """Fetch and parse TradingView's forecast page.
-
-The page embeds its data as JSON in ``<script type="application/prs.init-data+json">`` blocks. The top-level
-keys are hashed and change between deploys, so blocks are located by the keys they contain instead.
+The page embeds its data as JSON in prs.init-data+json script blocks.
+Their keys are hashed and change between deploys, so blocks are found by the keys inside.
 """
 
 import json
@@ -11,6 +10,7 @@ from typing import Any
 import httpx
 
 from livestocks.crawler.errors import NotFoundError, ParseError, UpstreamError
+from livestocks.crawler.json_values import as_dict, as_float, as_int, as_list
 from livestocks.crawler.retry import with_retries
 from livestocks.domain import Forecast
 
@@ -28,14 +28,13 @@ _SCRIPT = re.compile(r'<script type="application/prs\.init-data\+json">(.*?)</sc
 
 def _find(obj: Any, key: str) -> Any:
     """Depth-first search for the first value stored under ``key``."""
-    if isinstance(obj, dict):
-        if key in obj:
-            return obj[key]
-        children = obj.values()
-    elif isinstance(obj, list):
-        children = obj
+    mapping = as_dict(obj)
+    if mapping is not None:
+        if key in mapping:
+            return mapping[key]
+        children: list[Any] = list(mapping.values())
     else:
-        return None
+        children = as_list(obj) or []
     for child in children:
         hit = _find(child, key)
         if hit is not None:
@@ -44,65 +43,65 @@ def _find(obj: Any, key: str) -> Any:
 
 
 def _var(variables: dict[str, Any], name: str) -> Any:
-    fields = (variables.get(name) or {}).get("fields") or []
-    return fields[0].get("value") if fields else None
-
-
-def _num(v: Any) -> float | None:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-
-def _int(v: Any) -> int | None:
-    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    entry = as_dict(variables.get(name)) or {}
+    fields = as_list(entry.get("fields")) or []
+    first = as_dict(fields[0]) if fields else None
+    return first.get("value") if first else None
 
 
 def parse_html(html: str, exchange: str, symbol: str) -> Forecast:
-    blocks = []
+    """Parse the forecast page HTML into a Forecast for the given exchange and symbol.
+    Data blocks are found by the keys they contain, not by their hashed names.
+    Raises ParseError when neither the quotes block nor the FAQ block is present.
+    """
+    blocks: list[Any] = []
     for m in _SCRIPT.finditer(html):
         try:
             blocks.append(json.loads(m.group(1)))
         except json.JSONDecodeError:
             continue
 
-    quotes = _find(blocks, "initForecastQuotes")
-    faq = _find(blocks, "symbolFaqData")
-    if not isinstance(quotes, dict) and not isinstance(faq, list):
+    quotes = as_dict(_find(blocks, "initForecastQuotes"))
+    faq = as_list(_find(blocks, "symbolFaqData"))
+    if quotes is None and faq is None:
         raise ParseError("forecast data blocks not found in page")
 
-    quotes = quotes if isinstance(quotes, dict) else {}
+    quotes = quotes or {}
     # symbolFaqData is a list of Q&A items, each carrying its own ``variables``; merge them all.
     variables: dict[str, Any] = {}
-    for item in faq if isinstance(faq, list) else []:
-        if isinstance(item, dict) and isinstance(item.get("variables"), dict):
-            for k, v in item["variables"].items():
-                variables.setdefault(k, v)
+    for item in faq or []:
+        item_variables = as_dict((as_dict(item) or {}).get("variables"))
+        for k, v in (item_variables or {}).items():
+            variables.setdefault(k, v)
 
     name = _var(variables, "symbol_instrument_name")
     if not name:
-        meta = _find(blocks, "meta")
-        name = meta.get("title") if isinstance(meta, dict) else None
+        name = (as_dict(_find(blocks, "meta")) or {}).get("title")
 
     return Forecast(
         exchange=exchange,
         symbol=symbol,
-        name=name,
-        price=_num(_var(variables, "price")),
-        change_pct=_num(_var(variables, "change_percent")),
-        pt_avg=_num(quotes.get("price_target_average")),
-        pt_high=_num(_var(variables, "max_estimate_price")),
-        pt_low=_num(_var(variables, "min_estimate_price")),
-        n_analysts=_int(quotes.get("price_target_estimates_num")),
-        rating_mark=_num(quotes.get("recommendation_mark")),
-        n_ratings=_int(quotes.get("recommendation_total")),
-        ath=_num(_var(variables, "all_time_high_price")),
-        next_earnings=_int(_var(variables, "earnings_release_next_date")),
+        name=name if isinstance(name, str) else None,
+        price=as_float(_var(variables, "price")),
+        change_pct=as_float(_var(variables, "change_percent")),
+        pt_avg=as_float(quotes.get("price_target_average")),
+        pt_high=as_float(_var(variables, "max_estimate_price")),
+        pt_low=as_float(_var(variables, "min_estimate_price")),
+        n_analysts=as_int(quotes.get("price_target_estimates_num")),
+        rating_mark=as_float(quotes.get("recommendation_mark")),
+        n_ratings=as_int(quotes.get("recommendation_total")),
+        ath=as_float(_var(variables, "all_time_high_price")),
+        next_earnings=as_int(_var(variables, "earnings_release_next_date")),
     )
 
 
 async def fetch_forecast(
     client: httpx.AsyncClient, exchange: str, symbol: str, retries: int = 2
 ) -> Forecast:
-    """Fetch the forecast page and parse it, retrying transient upstream failures ``retries`` times."""
+    """Fetch the forecast page and parse it, retrying transient upstream failures.
+    A 404 raises NotFoundError at once; other errors are retried with backoff
+    up to `retries` extra times before UpstreamError is raised.
+    """
     url = URL.format(exchange=exchange, symbol=symbol)
 
     async def attempt() -> Forecast:

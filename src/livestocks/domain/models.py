@@ -1,11 +1,17 @@
-"""Immutable value objects shared by every layer: forecasts, estimates, tracked tickers."""
+"""Immutable value objects shared by every layer.
+Forecasts, estimates, price bars and tracked tickers are frozen dataclasses.
+Fixed value sets are StrEnums that compare equal to their plain strings.
+"""
 
 from dataclasses import dataclass
 from enum import StrEnum
 
 
 class TickerStatus(StrEnum):
-    """Where a tracked ticker stands in its crawl lifecycle."""
+    """Where a tracked ticker stands in its crawl lifecycle.
+    PENDING has no data yet, OK has a forecast, ERROR failed but will be retried,
+    and FAILED has used up its retries.
+    """
 
     PENDING = "pending"
     OK = "ok"
@@ -14,7 +20,10 @@ class TickerStatus(StrEnum):
 
 
 class RatingTone(StrEnum):
-    """Sentiment bucket of an analyst consensus, used for colouring."""
+    """Sentiment bucket of an analyst consensus, used for colouring.
+    BUY, HOLD and SELL group the five rating labels; NONE means no rating.
+    Values are plain strings, so they double as CSS class names.
+    """
 
     BUY = "buy"
     HOLD = "hold"
@@ -24,20 +33,29 @@ class RatingTone(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class TickerId:
-    """Exchange and symbol that together identify one ticker."""
+    """Exchange and symbol that together identify one ticker.
+    Frozen, so it can be used as a dictionary key.
+    key gives the EXCHANGE:SYMBOL text form.
+    """
 
     exchange: str
     symbol: str
 
     @property
     def key(self) -> str:
-        """Return the ``EXCHANGE:SYMBOL`` form used in URLs, logs and caches."""
+        """Return the EXCHANGE:SYMBOL form used in URLs, logs and caches.
+        For example IDX:TLKM.
+        Both parts are already upper-case after parsing.
+        """
         return f"{self.exchange}:{self.symbol}"
 
 
 @dataclass(frozen=True, slots=True)
 class Forecast:
-    """One snapshot of TradingView's analyst forecast for a ticker."""
+    """One snapshot of TradingView's analyst forecast for a ticker.
+    Holds the price targets, rating score, price and next earnings date.
+    Any field can be None when TradingView does not publish it.
+    """
 
     exchange: str
     symbol: str
@@ -56,7 +74,10 @@ class Forecast:
 
 @dataclass(frozen=True, slots=True)
 class PriceBar:
-    """One daily close of a ticker's price history."""
+    """One daily close of a ticker's price history.
+    ts is a unix timestamp in seconds.
+    close is in the ticker's trading currency.
+    """
 
     ts: int  # unix seconds
     close: float
@@ -64,7 +85,10 @@ class PriceBar:
 
 @dataclass(frozen=True, slots=True)
 class Period:
-    """One fiscal period of an EPS or revenue series."""
+    """One fiscal period of an EPS or revenue series.
+    label is a year such as 2026 or a quarter such as 2026-Q2.
+    actual is None until the period has been reported.
+    """
 
     label: str  # "2026" or "2026-Q2"
     actual: float | None
@@ -73,7 +97,10 @@ class Period:
 
     @property
     def surprise(self) -> float | None:
-        """Return (actual - estimate) / |estimate|, or None when either side is missing."""
+        """Return (actual - estimate) / |estimate|, or None if either value is missing.
+        A positive value means the company beat the estimate.
+        A zero estimate also gives None, to avoid dividing by zero.
+        """
         if self.actual is None or not self.estimate:
             return None
         return (self.actual - self.estimate) / abs(self.estimate)
@@ -81,7 +108,10 @@ class Period:
 
 @dataclass(frozen=True, slots=True)
 class Extras:
-    """Analyst rating breakdown and EPS / revenue actuals vs estimates."""
+    """Analyst rating breakdown plus EPS and revenue actuals versus estimates.
+    The five counts are analysts per rating, strong buy to strong sell.
+    Each series has an annual (fy) and a quarterly (fq) variant.
+    """
 
     strong_buy: int | None
     buy: int | None
@@ -95,7 +125,10 @@ class Extras:
 
     @property
     def rating_counts(self) -> list[tuple[str, int]] | None:
-        """Return (label, analysts) from strong buy to strong sell, or None if any count is missing."""
+        """Return (label, analysts) pairs from strong buy to strong sell.
+        Returns None when any of the five counts is missing.
+        The order matches the arcs of the consensus gauge.
+        """
         counts = (self.strong_buy, self.buy, self.hold, self.sell, self.strong_sell)
         labels = ("Strong buy", "Buy", "Hold", "Sell", "Strong sell")
         result: list[tuple[str, int]] = []
@@ -108,7 +141,10 @@ class Extras:
 
 @dataclass(frozen=True, slots=True)
 class TrackedTicker:
-    """Tracked ticker joined with its latest forecast (if any) and crawl status."""
+    """A tracked ticker joined with its latest forecast and crawl status.
+    forecast is None until the first successful crawl.
+    The counters and timestamps drive scheduling and the status the UI shows.
+    """
 
     exchange: str
     symbol: str
@@ -124,12 +160,18 @@ class TrackedTicker:
 
     @property
     def key(self) -> str:
-        """Return the ``EXCHANGE:SYMBOL`` form of this ticker."""
+        """Return the EXCHANGE:SYMBOL form of this ticker.
+        Matches TickerId.key.
+        Used as the key for in-flight crawls and UI rows.
+        """
         return f"{self.exchange}:{self.symbol}"
 
     @property
     def status(self) -> TickerStatus:
-        """Return the crawl lifecycle state derived from data and failure counters."""
+        """Derive the crawl lifecycle state from the data and the failure counters.
+        Dead tickers are FAILED, tickers without a forecast are ERROR or PENDING,
+        and everything else is OK.
+        """
         if self.dead:
             return TickerStatus.FAILED
         if self.forecast is None:
@@ -138,7 +180,10 @@ class TrackedTicker:
 
     @property
     def upside(self) -> float | None:
-        """Return the average price target's distance from the current price as a fraction."""
+        """Return how far the average price target is from the current price.
+        The result is a fraction: 0.47 means the target is 47% above the price.
+        None when the price or the average target is missing.
+        """
         f = self.forecast
         if f and f.pt_avg and f.price:
             return f.pt_avg / f.price - 1

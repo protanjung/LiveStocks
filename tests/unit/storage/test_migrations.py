@@ -21,7 +21,9 @@ class TestMigrate:
     def test_database_created_before_versioning_keeps_its_rows(self, tmp_path):
         path = tmp_path / "legacy.db"
         legacy = sqlite3.connect(path)
-        legacy.executescript(SCHEMA_V1)  # what the app created before migrations existed (user_version 0)
+        legacy.executescript(
+            SCHEMA_V1
+        )  # what the app created before migrations existed (user_version 0)
         legacy.execute("INSERT INTO tickers (exchange, symbol, added_at) VALUES ('IDX', 'TLKM', 5)")
         legacy.commit()
         legacy.close()

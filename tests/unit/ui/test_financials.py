@@ -37,7 +37,9 @@ class TestGauge:
 
         html = gauge(1.22, counts)
 
-        assert html.count("<path") == 5 and ">18<" in html and "Strong sell" in html
+        assert html.count("<path") == 5
+        assert ">18<" in html
+        assert "Strong sell" in html
 
     def test_no_rating_has_no_arcs(self):
         assert "<path" not in gauge(None)

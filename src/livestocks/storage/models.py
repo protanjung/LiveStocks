@@ -1,4 +1,7 @@
-"""SQLite schema (DDL) and the shared SQL fragments built on it."""
+"""SQLite schema (DDL) and the shared SQL fragments built on it.
+SCHEMA_V1 is the baseline; later versions are added in migrations.py.
+FORECAST_COLUMNS and TICKER_ROWS_SQL keep the store's queries consistent.
+"""
 
 SCHEMA_V1 = """
 CREATE TABLE IF NOT EXISTS tickers (
@@ -48,14 +51,16 @@ CREATE INDEX IF NOT EXISTS forecasts_ticker_time ON forecasts (exchange, symbol,
 """
 
 FORECAST_COLUMNS = (
-    "name, price, change_pct, pt_avg, pt_high, pt_low, n_analysts, rating_mark, n_ratings, ath, next_earnings"
+    "name, price, change_pct, pt_avg, pt_high, pt_low, n_analysts, "
+    "rating_mark, n_ratings, ath, next_earnings"
 )
 
 # Every tracked ticker joined to its latest forecast snapshot (if any).
 TICKER_ROWS_SQL = """
-SELECT t.exchange, t.symbol, t.name AS tname, t.added_at, t.last_fetch, t.next_fetch, t.last_error,
-       t.fail_count, t.dead, f.fetched_at, f.name, f.price, f.change_pct, f.pt_avg, f.pt_high, f.pt_low,
-       f.n_analysts, f.rating_mark, f.n_ratings, f.ath, f.next_earnings
+SELECT t.exchange, t.symbol, t.name AS tname, t.added_at, t.last_fetch, t.next_fetch,
+       t.last_error, t.fail_count, t.dead, f.fetched_at, f.name, f.price, f.change_pct,
+       f.pt_avg, f.pt_high, f.pt_low, f.n_analysts, f.rating_mark, f.n_ratings, f.ath,
+       f.next_earnings
 FROM tickers t
 LEFT JOIN forecasts f ON f.id = (
     SELECT id FROM forecasts WHERE exchange = t.exchange AND symbol = t.symbol

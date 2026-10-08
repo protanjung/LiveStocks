@@ -52,7 +52,8 @@ class TestSweep:
 
         by_symbol = {r.symbol: r for r in store.rows()}
         assert by_symbol["TLKM"].status is TickerStatus.OK
-        assert by_symbol["ZZZZ"].status is TickerStatus.ERROR and by_symbol["ZZZZ"].fail_count == 1
+        assert by_symbol["ZZZZ"].status is TickerStatus.ERROR
+        assert by_symbol["ZZZZ"].fail_count == 1
         assert updater.fetching == set()
 
     async def test_unexpected_exception_is_recorded_without_stopping_other_tickers(

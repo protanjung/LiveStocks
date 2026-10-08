@@ -1,8 +1,11 @@
-"""EPS / revenue actual-vs-estimate chart and table."""
+"""EPS and revenue actual-versus-estimate chart and table.
+financial_options builds the ECharts bars and fin_table the per-period rows.
+Revenue is abbreviated to T, B or M; EPS keeps two decimals.
+"""
 
 from html import escape
 
-from livestocks.domain import Extras, Period
+from livestocks.domain import Period
 from livestocks.ui.chart import COLORS, MONO
 
 _COMPACT_JS = (
@@ -13,7 +16,10 @@ _COMPACT_JS = (
 
 
 def compact(v: float | None, kind: str) -> str:
-    """EPS keeps two decimals; revenue is abbreviated (T / B / M)."""
+    """Format a value for EPS (two decimals) or revenue (abbreviated with T, B or M).
+    Anything below a million prints as a whole number.
+    None becomes an em dash.
+    """
     if v is None:
         return "—"
     if kind == "eps":
@@ -26,7 +32,10 @@ def compact(v: float | None, kind: str) -> str:
 
 
 def short_label(label: str) -> str:
-    """'2026-Q2' -> 'Q2 26'; annual labels stay as they are."""
+    """Shorten a fiscal period label: '2026-Q2' becomes 'Q2 26', years stay as they are.
+    Keeps chart axes and table headers narrow.
+    Used by both the chart and the table.
+    """
     if "-Q" in label:
         year, q = label.split("-")
         return f"{q} {year[-2:]}"
@@ -35,6 +44,10 @@ def short_label(label: str) -> str:
 
 # ---- table ----
 def fin_table(periods: tuple[Period, ...], kind: str) -> str:
+    """Return the scrollable table of reported, estimate and surprise per period.
+    The first column stays frozen while the periods scroll sideways.
+    Surprise is green for beats and red for misses.
+    """
     head = "".join(f"<th class='r'>{escape(short_label(p.label))}</th>" for p in periods)
     reported = "".join(f"<td class='r num'>{compact(p.actual, kind)}</td>" for p in periods)
     estimate = "".join(f"<td class='r num'>{compact(p.estimate, kind)}</td>" for p in periods)
@@ -55,6 +68,10 @@ def fin_table(periods: tuple[Period, ...], kind: str) -> str:
 
 # ---- chart ----
 def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dict:
+    """Build the ECharts option dict for one EPS or revenue series.
+    Reported and estimate bars sit side by side; future periods get a FORECAST area.
+    kind picks the colour and number format, dark the palette.
+    """
     col = COLORS[dark]
     labels = [short_label(p.label) for p in periods]
     reported_color = col["accent"] if kind == "eps" else ("#e8b04a" if dark else "#a96f0a")
@@ -62,29 +79,47 @@ def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dic
     first_forecast = next((i for i, p in enumerate(periods) if not p.reported), None)
 
     estimate_series: dict = {
-        "name": "Estimate", "type": "bar", "data": [p.estimate for p in periods], "barMaxWidth": 18,
+        "name": "Estimate",
+        "type": "bar",
+        "data": [p.estimate for p in periods],
+        "barMaxWidth": 18,
         "itemStyle": {"color": est_color, "opacity": 0.45, "borderRadius": [3, 3, 0, 0]},
     }
     if first_forecast is not None:
         estimate_series["markArea"] = {
             "silent": True,
             "itemStyle": {"color": est_color, "opacity": 0.08},
-            "label": {"show": True, "position": "insideBottomRight", "color": col["muted"], "fontSize": 10,
-                      "fontFamily": MONO, "distance": 6},
-            "data": [[{"xAxis": labels[first_forecast], "name": "FORECAST"}, {"xAxis": labels[-1]}]],
+            "label": {
+                "show": True,
+                "position": "insideBottomRight",
+                "color": col["muted"],
+                "fontSize": 10,
+                "fontFamily": MONO,
+                "distance": 6,
+            },
+            "data": [
+                [{"xAxis": labels[first_forecast], "name": "FORECAST"}, {"xAxis": labels[-1]}]
+            ],
         }
     return {
         "animation": False,
         "grid": {"left": 8, "right": 12, "top": 16, "bottom": 36, "containLabel": True},
         "legend": {
-            "bottom": 0, "icon": "circle", "itemWidth": 8, "itemHeight": 8,
+            "bottom": 0,
+            "icon": "circle",
+            "itemWidth": 8,
+            "itemHeight": 8,
             "textStyle": {"color": col["muted"], "fontSize": 11},
-            "data": [{"name": "Reported", "itemStyle": {"color": reported_color}},
-                     {"name": "Estimate", "itemStyle": {"color": est_color}}],
+            "data": [
+                {"name": "Reported", "itemStyle": {"color": reported_color}},
+                {"name": "Estimate", "itemStyle": {"color": est_color}},
+            ],
         },
         "tooltip": {
-            "trigger": "axis", "axisPointer": {"type": "shadow", "shadowStyle": {"opacity": 0.08}},
-            "backgroundColor": col["surface"], "borderColor": col["line"],
+            "trigger": "axis",
+            "axisPointer": {"type": "shadow", "shadowStyle": {"opacity": 0.08}},
+            "backgroundColor": col["surface"],
+            "borderColor": col["line"],
             "textStyle": {"color": col["fg"], "fontFamily": MONO, "fontSize": 12},
             ":formatter": """(ps) => {
                 __COMPACT__
@@ -97,19 +132,30 @@ def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dic
             }""".replace("__COMPACT__", _COMPACT_JS),
         },
         "xAxis": {
-            "type": "category", "data": labels, "axisTick": {"show": False},
+            "type": "category",
+            "data": labels,
+            "axisTick": {"show": False},
             "axisLine": {"lineStyle": {"color": col["line"]}},
             "axisLabel": {"color": col["muted"], "fontSize": 10, "hideOverlap": True},
         },
         "yAxis": {
             "type": "value",
-            "axisLabel": {"color": col["muted"], "fontSize": 10, "fontFamily": MONO,
-                          ":formatter": "(v) => { %s return c(v); }" % _COMPACT_JS},
+            "axisLabel": {
+                "color": col["muted"],
+                "fontSize": 10,
+                "fontFamily": MONO,
+                ":formatter": f"(v) => {{ {_COMPACT_JS} return c(v); }}",
+            },
             "splitLine": {"lineStyle": {"color": col["line"], "type": "dashed"}},
         },
         "series": [
-            {"name": "Reported", "type": "bar", "data": [p.actual for p in periods], "barMaxWidth": 18,
-             "itemStyle": {"color": reported_color, "borderRadius": [3, 3, 0, 0]}},
+            {
+                "name": "Reported",
+                "type": "bar",
+                "data": [p.actual for p in periods],
+                "barMaxWidth": 18,
+                "itemStyle": {"color": reported_color, "borderRadius": [3, 3, 0, 0]},
+            },
             estimate_series,
         ],
     }

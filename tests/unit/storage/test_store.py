@@ -17,7 +17,8 @@ class TestTrackedTickers:
         assert store.add_ticker("IDX", "TLKM") is False
 
         [row] = store.rows()
-        assert row.status is TickerStatus.PENDING and row.forecast is None
+        assert row.status is TickerStatus.PENDING
+        assert row.forecast is None
         assert store.due() == [("IDX", "TLKM")]
 
     def test_remove_deletes_snapshots_prices_and_extras(self, store, make_forecast):
@@ -28,7 +29,8 @@ class TestTrackedTickers:
         store.remove_ticker("IDX", "TLKM")
 
         assert store.rows() == []
-        assert store.history("IDX", "TLKM") == [] and store.prices("IDX", "TLKM") == []
+        assert store.history("IDX", "TLKM") == []
+        assert store.prices("IDX", "TLKM") == []
 
 
 class TestCrawlOutcomes:
@@ -38,7 +40,9 @@ class TestCrawlOutcomes:
         store.record_success(make_forecast(price=2310.0), 3600, now=2000)
 
         [row] = store.rows()
-        assert row.status is TickerStatus.OK and row.forecast.price == 2310.0 and row.name == "Telkom"
+        assert row.status is TickerStatus.OK
+        assert row.forecast.price == 2310.0
+        assert row.name == "Telkom"
         assert row.upside == pytest.approx(3394 / 2310 - 1)
         assert [t for t, _ in store.history("IDX", "TLKM")] == [1000, 2000]
 
@@ -55,7 +59,9 @@ class TestCrawlOutcomes:
             store.record_failure("IDX", "ZZZZ", "not found", 3600, 3, now=100)
 
         [row] = store.rows()
-        assert row.dead and row.status is TickerStatus.FAILED and row.last_error == "not found"
+        assert row.dead
+        assert row.status is TickerStatus.FAILED
+        assert row.last_error == "not found"
         assert store.due(now=10**9) == []
 
     def test_retry_clears_failure_state(self, store):
@@ -75,7 +81,11 @@ class TestPrices:
         store.upsert_prices("IDX", "TLKM", [PriceBar(1, 10.0), PriceBar(2, 11.0)])
         store.upsert_prices("IDX", "TLKM", [PriceBar(2, 12.0), PriceBar(3, 13.0)])
 
-        assert store.prices("IDX", "TLKM") == [PriceBar(1, 10.0), PriceBar(2, 12.0), PriceBar(3, 13.0)]
+        assert store.prices("IDX", "TLKM") == [
+            PriceBar(1, 10.0),
+            PriceBar(2, 12.0),
+            PriceBar(3, 13.0),
+        ]
         assert store.prices("IDX", "TLKM", since=2) == [PriceBar(2, 12.0), PriceBar(3, 13.0)]
 
 

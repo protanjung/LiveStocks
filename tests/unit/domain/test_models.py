@@ -7,7 +7,10 @@ class TestPeriod:
     def test_surprise_is_relative_to_the_estimate(self):
         assert Period("2026-Q2", 63.54, 58.17, True).surprise == pytest.approx(0.0923, abs=0.001)
 
-    @pytest.mark.parametrize("period", [Period("x", None, 1.0, False), Period("x", 1.0, None, True), Period("x", 1.0, 0.0, True)])
+    @pytest.mark.parametrize(
+        "period",
+        [Period("x", None, 1.0, False), Period("x", 1.0, None, True), Period("x", 1.0, 0.0, True)],
+    )
     def test_surprise_is_none_without_both_sides(self, period):
         assert period.surprise is None
 

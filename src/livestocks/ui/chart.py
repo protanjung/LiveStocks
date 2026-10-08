@@ -13,8 +13,24 @@ YEAR_MS = 365 * 86400 * 1000
 MONO = "IBM Plex Mono, monospace"
 
 COLORS = {
-    True: dict(fg="#e6ebf5", muted="#8a97b2", line="#243049", accent="#6ea0ff", surface="#131a28", pos="#34c38f", neg="#f0616d"),
-    False: dict(fg="#121a2b", muted="#5a6781", line="#dfe4ee", accent="#2e62d9", surface="#ffffff", pos="#0f8f63", neg="#c8323f"),
+    True: {
+        "fg": "#e6ebf5",
+        "muted": "#8a97b2",
+        "line": "#243049",
+        "accent": "#6ea0ff",
+        "surface": "#131a28",
+        "pos": "#34c38f",
+        "neg": "#f0616d",
+    },
+    False: {
+        "fg": "#121a2b",
+        "muted": "#5a6781",
+        "line": "#dfe4ee",
+        "accent": "#2e62d9",
+        "surface": "#ffffff",
+        "pos": "#0f8f63",
+        "neg": "#c8323f",
+    },
 }
 
 _TOOLTIP = """(ps) => {
@@ -27,30 +43,58 @@ _TOOLTIP = """(ps) => {
 
 
 def _pill(label: str, value: float, color: str, col: dict, position: str = "top") -> dict:
-    """endLabel config: a coloured label box joined to an outlined value box, right-aligned to the line end."""
+    """EndLabel config: a coloured label box joined to an outlined value box, right-aligned to the line end."""
     return {
         "show": True,
         "position": position,
         "align": "right",
         "distance": 5,
-        # phones are too narrow for "Max +79.7%": drop the percentage there (the target card above has it)
-        ":formatter": "() => '{a|' + (innerWidth < 600 ? '%s' : '%s') + '}{b|%s}'"
-        % (label.split(" ")[0], label, price_fmt(value)),
+        # phones are too narrow for "Max +79.7%": drop the percentage there
+        ":formatter": (
+            f"() => '{{a|' + (innerWidth < 600 ? '{label.split(' ')[0]}' : '{label}')"
+            f" + '}}{{b|{price_fmt(value)}}}'"
+        ),
         "rich": {
-            "a": {"backgroundColor": color, "color": "#fff", "padding": [5, 7], "borderRadius": [4, 0, 0, 4],
-                  "fontSize": 11, "fontFamily": MONO},
-            "b": {"backgroundColor": col["surface"], "color": color, "padding": [4, 7], "borderRadius": [0, 4, 4, 0],
-                  "borderColor": color, "borderWidth": 1, "fontSize": 11, "fontWeight": 600, "fontFamily": MONO},
+            "a": {
+                "backgroundColor": color,
+                "color": "#fff",
+                "padding": [5, 7],
+                "borderRadius": [4, 0, 0, 4],
+                "fontSize": 11,
+                "fontFamily": MONO,
+            },
+            "b": {
+                "backgroundColor": col["surface"],
+                "color": color,
+                "padding": [4, 7],
+                "borderRadius": [0, 4, 4, 0],
+                "borderColor": color,
+                "borderWidth": 1,
+                "fontSize": 11,
+                "fontWeight": 600,
+                "fontFamily": MONO,
+            },
         },
     }
 
 
 def _target_line(
-    name: str, t0: int, t1: int, price: float, target: float, color: str, col: dict, position: str = "top"
+    name: str,
+    t0: int,
+    t1: int,
+    price: float,
+    target: float,
+    color: str,
+    col: dict,
+    position: str = "top",
 ) -> dict:
     pct = (target / price - 1) * 100
     return {
-        "name": name, "type": "line", "silent": True, "showSymbol": False, "z": 3,
+        "name": name,
+        "type": "line",
+        "silent": True,
+        "showSymbol": False,
+        "z": 3,
         "data": [[t0, price], [t1, target]],
         "lineStyle": {"color": color, "width": 1.5, "type": [2, 3]},
         "endLabel": _pill(f"{name} {pct:+.1f}%", target, color, col, position),
@@ -59,7 +103,10 @@ def _target_line(
 
 
 def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: int) -> dict:
-    """``bars`` are (unix seconds, close) already filtered to the visible window."""
+    """Build the ECharts option dict for the price line and the forecast cone.
+    bars are the visible daily closes; the cone fans out one year from the last bar.
+    dark selects the palette and now_ms is the anchor when there are no bars.
+    """
     col = COLORS[dark]
     data = [[b.ts * 1000, b.close] for b in bars]
     price = f.price if f.price is not None else (data[-1][1] if data else None)
@@ -68,36 +115,81 @@ def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: 
 
     series: list[dict] = [
         {
-            "name": "Price", "type": "line", "data": data, "showSymbol": False, "z": 4,
+            "name": "Price",
+            "type": "line",
+            "data": data,
+            "showSymbol": False,
+            "z": 4,
             "lineStyle": {"color": col["accent"], "width": 2},
-            "areaStyle": {"color": {"type": "linear", "x": 0, "y": 0, "x2": 0, "y2": 1, "colorStops": [
-                {"offset": 0, "color": col["accent"] + "40"}, {"offset": 1, "color": col["accent"] + "00"}]}},
+            "areaStyle": {
+                "color": {
+                    "type": "linear",
+                    "x": 0,
+                    "y": 0,
+                    "x2": 0,
+                    "y2": 1,
+                    "colorStops": [
+                        {"offset": 0, "color": col["accent"] + "40"},
+                        {"offset": 1, "color": col["accent"] + "00"},
+                    ],
+                }
+            },
         }
     ]
     if price is not None:
-        series.append({
-            "name": "Current", "type": "line", "silent": True, "showSymbol": False, "z": 4,
-            "data": [[t0, price], [t1, price]],
-            "lineStyle": {"color": col["accent"], "width": 2},
-            "endLabel": _pill("Current", price, col["accent"], col, "top"),
-            "labelLayout": {"moveOverlap": "shiftY"},
-        })
+        series.append(
+            {
+                "name": "Current",
+                "type": "line",
+                "silent": True,
+                "showSymbol": False,
+                "z": 4,
+                "data": [[t0, price], [t1, price]],
+                "lineStyle": {"color": col["accent"], "width": 2},
+                "endLabel": _pill("Current", price, col["accent"], col, "top"),
+                "labelLayout": {"moveOverlap": "shiftY"},
+            }
+        )
         if f.pt_low is not None and f.pt_high is not None:
             cone = col["pos"] if (f.pt_avg or price) >= price else col["neg"]
             series += [
                 # invisible base up to the low target, then the stacked low-to-high band
-                {"name": "Cone base", "type": "line", "stack": "cone", "silent": True, "showSymbol": False,
-                 "data": [[t0, price], [t1, f.pt_low]], "lineStyle": {"opacity": 0}, "z": 1},
-                {"name": "Cone", "type": "line", "stack": "cone", "silent": True, "showSymbol": False,
-                 "data": [[t0, 0], [t1, f.pt_high - f.pt_low]], "lineStyle": {"opacity": 0},
-                 "areaStyle": {"color": cone, "opacity": 0.14}, "z": 1},
+                {
+                    "name": "Cone base",
+                    "type": "line",
+                    "stack": "cone",
+                    "silent": True,
+                    "showSymbol": False,
+                    "data": [[t0, price], [t1, f.pt_low]],
+                    "lineStyle": {"opacity": 0},
+                    "z": 1,
+                },
+                {
+                    "name": "Cone",
+                    "type": "line",
+                    "stack": "cone",
+                    "silent": True,
+                    "showSymbol": False,
+                    "data": [[t0, 0], [t1, f.pt_high - f.pt_low]],
+                    "lineStyle": {"opacity": 0},
+                    "areaStyle": {"color": cone, "opacity": 0.14},
+                    "z": 1,
+                },
             ]
         for name, target in (("Max", f.pt_high), ("Avg", f.pt_avg), ("Min", f.pt_low)):
             if target is not None:
                 # labels sit above their line's end; a target below the current price hangs below it instead
                 series.append(
-                    _target_line(name, t0, t1, price, target, col["pos"] if target >= price else col["neg"], col,
-                                 "top" if target >= price else "bottom")
+                    _target_line(
+                        name,
+                        t0,
+                        t1,
+                        price,
+                        target,
+                        col["pos"] if target >= price else col["neg"],
+                        col,
+                        "top" if target >= price else "bottom",
+                    )
                 )
 
     return {
@@ -105,19 +197,23 @@ def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: 
         "grid": {"left": 8, "right": 14, "top": 28, "bottom": 8, "containLabel": True},
         "tooltip": {
             "trigger": "axis",
-            "backgroundColor": col["surface"], "borderColor": col["line"],
+            "backgroundColor": col["surface"],
+            "borderColor": col["line"],
             "textStyle": {"color": col["fg"], "fontFamily": MONO, "fontSize": 12},
             "axisPointer": {"type": "line", "lineStyle": {"color": col["muted"], "type": "dashed"}},
             ":formatter": _TOOLTIP,
         },
         "xAxis": {
-            "type": "time", "max": t1,
+            "type": "time",
+            "max": t1,
             "axisLine": {"lineStyle": {"color": col["line"]}},
             "axisLabel": {"color": col["muted"], "fontSize": 10, "hideOverlap": True},
             "splitLine": {"show": False},
         },
         "yAxis": {
-            "type": "value", "scale": True, "boundaryGap": ["4%", "8%"],
+            "type": "value",
+            "scale": True,
+            "boundaryGap": ["4%", "8%"],
             "axisLabel": {"color": col["muted"], "fontSize": 10, "fontFamily": MONO},
             "splitLine": {"lineStyle": {"color": col["line"], "type": "dashed"}},
         },

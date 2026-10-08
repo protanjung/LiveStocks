@@ -1,12 +1,15 @@
-"""Design tokens and global CSS, ported from the approved dashboard mock."""
+"""Design tokens and global CSS ported from the approved dashboard mock.
+Colours are CSS variables, dark by default with a light override class.
+FONTS_HEAD loads IBM Plex and CSS is injected once per page.
+"""
 
-FONTS_HEAD = '''
+FONTS_HEAD = """
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-'''
+"""
 
-CSS = r'''
+CSS = r"""
 
 :root {
   --bg: #0c111b; --surface: #131a28; --surface-2: #182134; --line: #243049;
@@ -179,9 +182,9 @@ footer button { background: none; border: 0; color: var(--accent); padding: 0; t
   .dhead .big { font-size: 28px; }
 }
 @media (prefers-reduced-motion: reduce) { .dot.busy, .spin { animation: none; } }
-''' 
+"""
 
-EXTRA_CSS = r'''
+EXTRA_CSS = r"""
 h1, h2, h3 { line-height: 1.25; letter-spacing: normal; font-family: var(--sans); }
 .add .add-field input { border: 0 !important; background: transparent !important; padding: 0 !important; box-shadow: none !important; }
 .add { align-items: stretch; }
@@ -199,10 +202,10 @@ main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; padding-
 .wrap, .nicegui-content, .q-page { min-width: 0; max-width: 100%; }
 body { overflow-x: hidden; }
 .nicegui-content > .wrap { align-self: center; }
-'''
+"""
 CSS = CSS + EXTRA_CSS
 
-EXTRA_CSS_2 = r'''
+EXTRA_CSS_2 = r"""
 .gauge-wrap { flex-direction: column; }
 .fingrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .tablewrap.fin { margin-top: 8px; }
@@ -215,13 +218,13 @@ EXTRA_CSS_2 = r'''
 .fintable tbody tr { cursor: default; }
 .fintable tbody tr:hover { background: transparent; }
 @media (max-width: 1000px) { .fingrid { grid-template-columns: minmax(0, 1fr); } }
-'''
+"""
 CSS = CSS + EXTRA_CSS_2
 
-EXTRA_CSS_3 = r'''
+EXTRA_CSS_3 = r"""
 .chartcard { display: flex; flex-direction: column; }
 .chartcard .chartbody { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .chartcard .chartbody > .nicegui-echart { flex: 1; }
 @media (max-width: 900px) { .chartcard .chartbody > .nicegui-echart { min-height: 340px !important; } }
-'''
+"""
 CSS = CSS + EXTRA_CSS_3

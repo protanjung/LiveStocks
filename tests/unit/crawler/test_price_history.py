@@ -23,7 +23,13 @@ class TestYahooSymbol:
 
 class TestParseChart:
     def test_skips_bars_with_null_close(self):
-        data = {"chart": {"result": [{"timestamp": [1, 2, 3], "indicators": {"quote": [{"close": [1.5, None, 2.5]}]}}]}}
+        data = {
+            "chart": {
+                "result": [
+                    {"timestamp": [1, 2, 3], "indicators": {"quote": [{"close": [1.5, None, 2.5]}]}}
+                ]
+            }
+        }
 
         assert parse_chart(data) == [PriceBar(1, 1.5), PriceBar(3, 2.5)]
 

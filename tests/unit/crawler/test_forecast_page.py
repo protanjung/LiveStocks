@@ -15,7 +15,8 @@ class TestParseHtml:
         assert (f.n_analysts, f.n_ratings) == (22, 23)
         assert f.rating_mark == pytest.approx(1.217, abs=0.001)
         assert f.next_earnings == 1793275200
-        assert f.name and "Telkom" in f.name
+        assert f.name
+        assert "Telkom" in f.name
 
     def test_page_without_data_blocks_raises_parse_error(self):
         with pytest.raises(ParseError):
@@ -25,12 +26,15 @@ class TestParseHtml:
 class TestFetchForecast:
     @respx.mock
     async def test_returns_parsed_forecast_on_200(self, forecast_html):
-        respx.get(url__regex=r".*IDX-TLKM.*").mock(return_value=httpx.Response(200, text=forecast_html))
+        respx.get(url__regex=r".*IDX-TLKM.*").mock(
+            return_value=httpx.Response(200, text=forecast_html)
+        )
 
         async with httpx.AsyncClient() as client:
             f = await fetch_forecast(client, "IDX", "TLKM")
 
-        assert f.symbol == "TLKM" and f.pt_high == 4150
+        assert f.symbol == "TLKM"
+        assert f.pt_high == 4150
 
     @respx.mock
     async def test_404_raises_not_found_without_retrying(self):

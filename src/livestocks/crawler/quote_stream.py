@@ -1,7 +1,6 @@
 """EPS / revenue history and analyst rating counts from TradingView's quote websocket.
-
-The forecast page loads these client-side over ``wss://data.tradingview.com``. An anonymous quote session for a
-symbol streams every field (about 1,400, ~250KB) and ends with ``quote_completed``.
+The forecast page loads them client-side over wss://data.tradingview.com.
+An anonymous quote session streams every field (~250KB) and ends with quote_completed.
 """
 
 import asyncio
@@ -13,20 +12,25 @@ from typing import Any
 import websockets
 
 from livestocks.crawler.errors import UpstreamError
+from livestocks.crawler.json_values import as_dict, as_float, as_int, as_list
 from livestocks.domain import Extras, Period
 
 WS_URL = "wss://data.tradingview.com/socket.io/websocket?from=symbols%2F{exchange}-{symbol}%2Fforecast-actuals-and-estimates%2F"
 ORIGIN = "https://www.tradingview.com"
-ANNUAL_KEEP, QUARTER_KEEP = 11, 16  # periods shown per chart, counting back from the last one with data
+ANNUAL_KEEP, QUARTER_KEEP = (
+    11,
+    16,
+)  # periods shown per chart, counting back from the last one with data
 
 
-def _frame(method: str, params: list) -> str:
+def _frame(method: str, params: list[Any]) -> str:
     body = json.dumps({"m": method, "p": params}, separators=(",", ":"))
     return f"~m~{len(body)}~m~{body}"
 
 
 def _split(raw: str) -> list[str]:
-    out, i = [], 0
+    out: list[str] = []
+    i = 0
     while i < len(raw):
         m = re.match(r"~m~(\d+)~m~", raw[i:])
         if not m:
@@ -37,11 +41,15 @@ def _split(raw: str) -> list[str]:
     return out
 
 
-async def fetch_quote(exchange: str, symbol: str, timeout: float = 25.0) -> dict[str, Any]:
+async def fetch_quote(exchange: str, symbol: str, max_seconds: float = 25.0) -> dict[str, Any]:
+    """Open an anonymous TradingView quote session and collect every field of a symbol.
+    Returns when the server sends quote_completed or the timeout expires.
+    Raises UpstreamError on socket errors, a bad status or an empty answer.
+    """
     full = f"{exchange}:{symbol}"
     session = "qs_livestocks"
     fields: dict[str, Any] = {}
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + max_seconds
     try:
         async with websockets.connect(
             WS_URL.format(exchange=exchange, symbol=symbol),
@@ -79,27 +87,20 @@ async def fetch_quote(exchange: str, symbol: str, timeout: float = 25.0) -> dict
                         done = True
     except UpstreamError:
         raise
-    except (asyncio.TimeoutError, OSError, websockets.WebSocketException) as e:
+    except (TimeoutError, OSError, websockets.WebSocketException) as e:
         raise UpstreamError(f"websocket error: {e.__class__.__name__}") from e
     if not fields:
         raise UpstreamError("no quote data")
     return fields
 
 
-def _num(v: Any) -> float | None:
-    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-
-def _count(v: Any) -> int | None:
-    return int(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
-
-
 def _periods(raw: Any, keep: int) -> tuple[Period, ...]:
-    out = []
-    for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict) or not item.get("FiscalPeriod"):
+    out: list[Period] = []
+    for raw_item in as_list(raw) or []:
+        item = as_dict(raw_item)
+        if item is None or not item.get("FiscalPeriod"):
             continue
-        actual, est = _num(item.get("Actual")), _num(item.get("Estimate"))
+        actual, est = as_float(item.get("Actual")), as_float(item.get("Estimate"))
         if actual is None and est is None:
             continue
         out.append(Period(str(item["FiscalPeriod"]), actual, est, bool(item.get("IsReported"))))
@@ -107,12 +108,16 @@ def _periods(raw: Any, keep: int) -> tuple[Period, ...]:
 
 
 def parse_quote(v: dict[str, Any]) -> Extras:
+    """Extract rating counts and EPS/revenue series from raw quote fields.
+    Missing fields become None or empty tuples instead of raising.
+    Series are trimmed to the periods the charts show.
+    """
     return Extras(
-        strong_buy=_count(v.get("recommendation_buy")),
-        buy=_count(v.get("recommendation_over")),
-        hold=_count(v.get("recommendation_hold")),
-        sell=_count(v.get("recommendation_under")),
-        strong_sell=_count(v.get("recommendation_sell")),
+        strong_buy=as_int(v.get("recommendation_buy")),
+        buy=as_int(v.get("recommendation_over")),
+        hold=as_int(v.get("recommendation_hold")),
+        sell=as_int(v.get("recommendation_under")),
+        strong_sell=as_int(v.get("recommendation_sell")),
         eps_fy=_periods(v.get("earnings_fy_h"), ANNUAL_KEEP),
         eps_fq=_periods(v.get("earnings_fq_h"), QUARTER_KEEP),
         rev_fy=_periods(v.get("revenues_fy_h"), ANNUAL_KEEP),
@@ -121,4 +126,8 @@ def parse_quote(v: dict[str, Any]) -> Extras:
 
 
 async def fetch_extras(exchange: str, symbol: str) -> Extras:
+    """Fetch and parse the rating counts and EPS/revenue estimates of a ticker.
+    Combines fetch_quote and parse_quote.
+    Raises UpstreamError when the websocket session fails.
+    """
     return parse_quote(await fetch_quote(exchange, symbol))

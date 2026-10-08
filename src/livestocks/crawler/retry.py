@@ -1,15 +1,15 @@
-"""Retry helper for crawler requests."""
+"""Retry helper for crawler requests.
+Only transient UpstreamError failures are retried; everything else surfaces.
+The delay doubles after each failed attempt.
+"""
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
 
 from livestocks.crawler.errors import UpstreamError
 
-T = TypeVar("T")
 
-
-async def with_retries(
+async def with_retries[T](
     attempt: Callable[[], Awaitable[T]], *, attempts: int = 3, base_delay: float = 2.0
 ) -> T:
     """Call ``attempt`` until it succeeds, retrying only UpstreamError with exponential backoff.

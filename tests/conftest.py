@@ -45,7 +45,9 @@ def make_forecast() -> Callable[..., Forecast]:
 
 @pytest.fixture
 def make_ticker(make_forecast) -> Callable[..., TrackedTicker]:
-    def factory(symbol: str = "TLKM", mark: float | None = 1.2, with_forecast: bool = True) -> TrackedTicker:
+    def factory(
+        symbol: str = "TLKM", mark: float | None = 1.2, with_forecast: bool = True
+    ) -> TrackedTicker:
         forecast = make_forecast(symbol, rating_mark=mark) if with_forecast else None
         return TrackedTicker("IDX", symbol, None, 0, 1, 0, None, 0, False, forecast, 1)
 

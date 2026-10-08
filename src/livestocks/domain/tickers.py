@@ -1,4 +1,7 @@
-"""Parsing of user-supplied ticker text."""
+"""Parsing of user-supplied ticker text.
+Accepts a bare symbol or EXCHANGE:SYMBOL in any letter case.
+Everything is normalised to upper case before it is stored or crawled.
+"""
 
 import re
 
@@ -9,7 +12,10 @@ _PART = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,14}$")
 
 
 def parse_ticker(raw: str, default_exchange: str) -> TickerId:
-    """Parse 'tlkm' or 'nasdaq:aapl' into an upper-case TickerId, raising InvalidTickerError if malformed."""
+    """Parse 'tlkm' or 'nasdaq:aapl' into an upper-case TickerId.
+    A bare symbol gets default_exchange.
+    Raises InvalidTickerError for empty, malformed or oversized input.
+    """
     text = raw.strip().upper()
     exchange, _, symbol = text.rpartition(":")
     if ":" in text and not exchange:

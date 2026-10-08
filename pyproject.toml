@@ -62,7 +62,8 @@ known-first-party = ["livestocks"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
 "scripts/**" = ["T20"]
-"src/livestocks/ui/theme.py" = ["E501"]
+# the ui package builds HTML, CSS and JavaScript inside string literals that are not worth splitting
+"src/livestocks/ui/**" = ["E501"]
 
 [tool.pyright]
 include = ["src", "scripts"]

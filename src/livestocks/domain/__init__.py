@@ -1,4 +1,7 @@
-"""Pure domain layer: value objects, ticker parsing and rating rules. No I/O."""
+"""Pure domain layer: value objects, ticker parsing and rating rules.
+Nothing here performs I/O, so every other layer can import it freely.
+Public names are re-exported from this package root.
+"""
 
 from livestocks.domain.errors import DomainError, InvalidTickerError
 from livestocks.domain.models import (

@@ -1,9 +1,11 @@
-"""Crawl everything we know how to fetch for one ticker."""
+"""Crawl everything we know how to fetch for one ticker.
+The forecast page is required; prices and extras are fetched concurrently after it.
+Optional failures are logged and returned in the result instead of raised.
+"""
 
 import asyncio
 import logging
 from collections.abc import Awaitable
-from typing import TypeVar
 
 import httpx
 
@@ -13,10 +15,9 @@ from livestocks.crawler.price_history import fetch_prices
 from livestocks.crawler.quote_stream import fetch_extras
 
 log = logging.getLogger(__name__)
-T = TypeVar("T")
 
 
-async def _best_effort(call: Awaitable[T], what: str, key: str) -> tuple[T | None, str | None]:
+async def _best_effort[T](call: Awaitable[T], what: str, key: str) -> tuple[T | None, str | None]:
     """Await ``call``; on any failure return (None, message) so the forecast is never lost."""
     try:
         return await call, None
@@ -26,8 +27,9 @@ async def _best_effort(call: Awaitable[T], what: str, key: str) -> tuple[T | Non
 
 
 async def crawl_ticker(client: httpx.AsyncClient, exchange: str, symbol: str) -> CrawlResult:
-    """Fetch the forecast (required), then price history and EPS/revenue extras (best-effort, concurrent).
+    """Fetch the forecast, then price history and EPS/revenue extras concurrently.
     Raises CrawlError if the forecast itself cannot be fetched.
+    Price or extras failures are returned inside the CrawlResult.
     """
     key = f"{exchange}:{symbol}"
     forecast = await fetch_forecast(client, exchange, symbol)

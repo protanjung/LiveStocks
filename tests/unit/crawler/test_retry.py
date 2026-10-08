@@ -34,7 +34,8 @@ class TestWithRetries:
             return "ok"
 
         assert await with_retries(flaky, attempts=3, base_delay=2) == "ok"
-        assert calls == 3 and sleeps == [2, 4]
+        assert calls == 3
+        assert sleeps == [2, 4]
 
     async def test_raises_the_last_error_when_attempts_run_out(self):
         async def always_down():
