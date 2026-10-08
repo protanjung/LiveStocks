@@ -11,6 +11,7 @@ repos:
         exclude: ^tests/fixtures/
       - id: check-toml
       - id: check-yaml
+        args: [--unsafe]  # mkdocs.yml uses python/name tags
       - id: check-added-large-files
         args: [--maxkb=500]
   - repo: https://github.com/astral-sh/ruff-pre-commit

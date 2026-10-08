@@ -1,7 +1,7 @@
 [project]
 name = "livestocks"
 version = "0.1.0"
-description = "Add your description here"
+description = "Analyst forecast dashboard and HTTP API fed by a TradingView crawler"
 readme = "README.md"
 authors = [
     { name = "Pandu Surya Tantra", email = "pandustantra@gmail.com" }
@@ -32,6 +32,10 @@ dev = [
     "pytest-cov>=7.1.0",
     "respx>=0.23.1",
     "ruff>=0.16.10",
+]
+docs = [
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
 ]
 
 [tool.pytest.ini_options]
@@ -80,3 +84,11 @@ strict = [
     "src/livestocks/services",
     "src/livestocks/api",
 ]
+
+[tool.coverage.run]
+source = ["livestocks"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = true

@@ -1,49 +1,63 @@
 # LiveStocks
 
-Dashboard of analyst price-target forecasts, crawled from TradingView
-(e.g. `https://www.tradingview.com/symbols/IDX-TLKM/forecast-price-target/`).
+Analyst forecast dashboard and HTTP API, fed by a background crawler of [TradingView](https://www.tradingview.com).
 
-The tracked list starts empty. Add tickers in the UI (`TLKM` or `EXCHANGE:SYMBOL`); a background
-crawler fetches each one right away, then refreshes every 6 hours and stores a history of snapshots.
+Track a ticker once and LiveStocks keeps its price targets, analyst consensus, EPS and revenue estimates and price
+history fresh. Look at them on a dashboard, or fetch them as JSON.
 
 ## Run
 
-```
-uv run livestocks
-```
-
-Open http://127.0.0.1:8080.
-
-## Configuration (env vars, prefix `LIVESTOCKS_`, or `.env`)
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `DB_PATH` | `data/livestocks.db` | SQLite file |
-| `DEFAULT_EXCHANGE` | `IDX` | Exchange used when only a symbol is typed |
-| `REFRESH_INTERVAL` | `21600` | Seconds between refreshes of one ticker |
-| `POLL_INTERVAL` | `30` | Seconds between updater sweeps |
-| `CONCURRENCY` | `2` | Parallel fetches |
-| `MAX_FAILURES` | `5` | Consecutive failures before a ticker is marked failed (retry from the UI) |
-| `HOST` / `PORT` | `127.0.0.1` / `8080` | Server address |
-
-## How it works
-
-TradingView embeds forecast data as JSON in `<script type="application/prs.init-data+json">` blocks,
-so a plain HTTP request is enough (no browser). `scraper.parse_html` locates the blocks by the keys
-they contain, because their top-level keys are hashed and change between deploys.
-
-```
-src/livestocks/
-  scraper.py   fetch + parse (pure parse_html)
-  prices.py    daily closes from Yahoo Finance
-  store.py     SQLite: tickers, crawl status, forecast history
-  updater.py   background loop with concurrency limit, jitter, backoff
-  ui/          NiceGUI pages, components, theme
-tests/         uv run pytest
+```bash
+uv sync
+uv run livestocks          # http://127.0.0.1:8080
 ```
 
-Price history for the detail chart comes from Yahoo Finance's public chart endpoint (TradingView only serves it
-over a websocket). Supported exchanges are listed in `prices.py`; others fall back to the prices saved at each crawl.
+Add tickers in the box at the top (`TLKM`, `NASDAQ:AAPL`). The list starts empty.
 
-Scraping TradingView may conflict with its terms of use; keep it low-volume and personal.
-Nothing here is investment advice.
+With Docker:
+
+```bash
+docker compose up --build  # data lives in the livestocks-data volume
+```
+
+## API
+
+```bash
+curl http://127.0.0.1:8080/api/v1/forecast/TLKM
+```
+
+`GET /api/v1/forecast/{ticker}` tracks the ticker if it is new, waits for its first crawl (up to 30 seconds), and
+returns its forecast. Known tickers are answered from storage at once. Errors use a `{code, detail}` body: `404`
+unknown ticker, `422` malformed ticker, `502` upstream failure, `504` first crawl too slow. Interactive docs are at
+`/api/docs`.
+
+## Configuration
+
+Environment variables prefixed `LIVESTOCKS_` (or a `.env` file), for example `LIVESTOCKS_PORT`,
+`LIVESTOCKS_REFRESH_INTERVAL` and `LIVESTOCKS_HOST`. The full list is in the documentation.
+
+There is **no login**. Setting `LIVESTOCKS_HOST=0.0.0.0` lets anyone on your network add tickers and call the API.
+
+## Documentation
+
+```bash
+uv sync --group docs
+uv run mkdocs serve
+```
+
+The site covers the architecture, configuration, the API, the data sources and how to develop the project.
+
+## Development
+
+```bash
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+uv run pyright
+uv run pre-commit install
+```
+
+Code lives in `src/livestocks/` as `domain`, `crawler`, `storage`, `services`, `api` and `ui` subsystems that depend on
+each other in one direction only; `tests/` mirrors that layout.
+
+Scraping TradingView may conflict with its terms of use, so keep it low-volume and personal. Nothing here is
+investment advice.

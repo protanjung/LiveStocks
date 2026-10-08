@@ -1,0 +1,64 @@
+site_name: LiveStocks
+site_description: Analyst forecast dashboard and API fed by a TradingView crawler
+docs_dir: docs
+strict: true
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: false
+            members_order: source
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Guide:
+      - Architecture: architecture.md
+      - Configuration: configuration.md
+      - HTTP API: api.md
+      - Data sources: data-sources.md
+      - Development: development.md
+  - Reference:
+      - Domain: reference/domain.md
+      - Crawler: reference/crawler.md
+      - Storage: reference/storage.md
+      - Services: reference/services.md
+      - API: reference/api.md
+      - UI: reference/ui.md
