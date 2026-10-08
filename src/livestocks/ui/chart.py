@@ -43,7 +43,7 @@ _TOOLTIP = """(ps) => {
 
 
 def _pill(label: str, value: float, color: str, col: dict, position: str = "top") -> dict:
-    """EndLabel config: a coloured label box joined to an outlined value box, right-aligned to the line end."""
+    """Label config: a coloured label box joined to an outlined value box, right-aligned to its point."""
     return {
         "show": True,
         "position": position,
@@ -78,6 +78,25 @@ def _pill(label: str, value: float, color: str, col: dict, position: str = "top"
     }
 
 
+def _pill_series(
+    label: str, t1: int, value: float, color: str, col: dict, position: str = "top"
+) -> dict:
+    """Invisible one-point series that carries a pill label above every line.
+    A label drawn by a line series sits at that line's z level, so another line could cross it.
+    Giving the pills their own series with a high z keeps them on top, and they avoid each other.
+    """
+    return {
+        "name": f"{label} pill",
+        "type": "scatter",
+        "silent": True,
+        "symbolSize": 0,
+        "z": 10,
+        "data": [[t1, value]],
+        "label": _pill(label, value, color, col, position),
+        "labelLayout": {"moveOverlap": "shiftY"},
+    }
+
+
 def _target_line(
     name: str,
     t0: int,
@@ -87,9 +106,9 @@ def _target_line(
     color: str,
     col: dict,
     position: str = "top",
-) -> dict:
+) -> list[dict]:
     pct = (target / price - 1) * 100
-    return {
+    line = {
         "name": name,
         "type": "line",
         "silent": True,
@@ -97,9 +116,8 @@ def _target_line(
         "z": 3,
         "data": [[t0, price], [t1, target]],
         "lineStyle": {"color": color, "width": 1.5, "type": [2, 3]},
-        "endLabel": _pill(f"{name} {pct:+.1f}%", target, color, col, position),
-        "labelLayout": {"moveOverlap": "shiftY"},
     }
+    return [line, _pill_series(f"{name} {pct:+.1f}%", t1, target, color, col, position)]
 
 
 def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: int) -> dict:
@@ -146,9 +164,14 @@ def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: 
                 "z": 4,
                 "data": [[t0, price], [t1, price]],
                 "lineStyle": {"color": col["accent"], "width": 2},
-                "endLabel": _pill("Current", price, col["accent"], col, "top"),
-                "labelLayout": {"moveOverlap": "shiftY"},
             }
+        )
+        # Current sits above its line unless a target hangs below it; then it goes under the line instead,
+        # so it never lands on top of the nearest target pill.
+        targets = (f.pt_low, f.pt_avg, f.pt_high)
+        any_below = any(t is not None and t < price for t in targets)
+        series.append(
+            _pill_series("Current", t1, price, col["accent"], col, "top" if any_below else "bottom")
         )
         if f.pt_low is not None and f.pt_high is not None:
             cone = col["pos"] if (f.pt_avg or price) >= price else col["neg"]
@@ -179,17 +202,15 @@ def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: 
         for name, target in (("Max", f.pt_high), ("Avg", f.pt_avg), ("Min", f.pt_low)):
             if target is not None:
                 # labels sit above their line's end; a target below the current price hangs below it instead
-                series.append(
-                    _target_line(
-                        name,
-                        t0,
-                        t1,
-                        price,
-                        target,
-                        col["pos"] if target >= price else col["neg"],
-                        col,
-                        "top" if target >= price else "bottom",
-                    )
+                series += _target_line(
+                    name,
+                    t0,
+                    t1,
+                    price,
+                    target,
+                    col["pos"] if target >= price else col["neg"],
+                    col,
+                    "top" if target >= price else "bottom",
                 )
 
     return {
