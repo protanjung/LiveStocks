@@ -1,0 +1,294 @@
+"""Pure HTML builders for dashboard widgets. Class names come from theme.CSS; all text is escaped here."""
+
+import time
+from datetime import datetime
+from html import escape
+
+from ..models import Forecast, TickerRow, rating_label
+
+
+# ---- formatting ----
+def fmt(v: float | None, d: int = 0) -> str:
+    return "—" if v is None else f"{v:,.{d}f}"
+
+
+def price_fmt(v: float | None) -> str:
+    """Whole numbers for IDX-sized prices; two decimals for fractional prices under 1,000 (e.g. 333.63)."""
+    if v is None:
+        return "—"
+    return fmt(v, 2 if abs(v) < 1000 and v != int(v) else 0)
+
+
+def pct(v: float) -> str:
+    return f"{'+' if v >= 0 else '−'}{abs(v) * 100:.1f}%"
+
+
+def arrow(v: float) -> str:
+    return "▲" if v >= 0 else "▼"
+
+
+def ago(ts: int | None, now: int | None = None) -> str:
+    if ts is None:
+        return "—"
+    s = max(0, (now or int(time.time())) - ts)
+    if s < 60:
+        return "just now"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    if s < 86400:
+        return f"{s // 3600} h ago"
+    return f"{s // 86400} d ago"
+
+
+def duration(seconds: int | None) -> str:
+    if seconds is None:
+        return "—"
+    if seconds <= 0:
+        return "now"
+    if seconds < 60:
+        return "<1m"
+    h, m = divmod(seconds // 60, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def date_short(ts: int | None, year: bool = True) -> str:
+    if not ts:
+        return "—"
+    d = datetime.fromtimestamp(ts)
+    return f"{d.day} {d:%b %Y}" if year else f"{d.day} {d:%b}"
+
+
+# ---- small pieces ----
+def rate_pill(mark: float | None) -> str:
+    label, tone = rating_label(mark)
+    if tone == "none":
+        return '<span class="muted">—</span>'
+    return f'<span class="rate {tone}"><i></i>{label}</span>'
+
+
+def upside_chip(up: float | None) -> str:
+    if up is None:
+        return '<span class="muted">—</span>'
+    return f'<span class="chip {"pos" if up >= 0 else "neg"}">{arrow(up)} {pct(up)}</span>'
+
+
+def change_line(change_pct: float | None) -> str:
+    if change_pct is None:
+        return ""
+    return f'<div class="chg {"pos" if change_pct >= 0 else "neg"}">{arrow(change_pct)} {abs(change_pct):.2f}%</div>'
+
+
+def range_bar(f: Forecast) -> str:
+    """Low-to-high target span with average tick and current-price dot, all on one scale."""
+    if f.pt_low is None or f.pt_high is None or f.price is None:
+        return '<span class="muted">—</span>'
+    lo, hi = min(f.pt_low, f.price), max(f.pt_high, f.price)
+    pad = (hi - lo) * 0.04 or 1
+    a, b = lo - pad, hi + pad
+
+    def pos(x: float) -> float:
+        return (x - a) / (b - a) * 100
+
+    avg = f'<div class="avg" style="left:{pos(f.pt_avg):.2f}%"></div>' if f.pt_avg else ""
+    label = f"Target range {price_fmt(f.pt_low)} to {price_fmt(f.pt_high)}, price {price_fmt(f.price)}"
+    return (
+        f'<div class="range" role="img" aria-label="{label}"><div class="track"></div>'
+        f'<div class="fill" style="left:{pos(f.pt_low):.2f}%;width:{pos(f.pt_high) - pos(f.pt_low):.2f}%"></div>'
+        f'{avg}<div class="px" style="left:{pos(f.price):.2f}%"></div>'
+        f'<span class="lo">{price_fmt(f.pt_low)}</span><span class="hi">{price_fmt(f.pt_high)}</span></div>'
+    )
+
+
+def ticker_cell(r: TickerRow) -> str:
+    return (
+        f'<div class="tk"><div class="badge-ex">{escape(r.exchange)}</div>'
+        f'<div><b>{escape(r.symbol)}</b><span class="nm">{escape(r.name or "—")}</span></div></div>'
+    )
+
+
+# ---- dashboard sections ----
+def kpi_strip(rows: list[TickerRow]) -> str:
+    ok = [r for r in rows if r.status == "ok" and r.upside is not None]
+    pending = sum(r.status == "pending" for r in rows)
+    failed = sum(r.status in ("error", "failed") for r in rows)
+
+    avg_up = sum(r.upside for r in ok) / len(ok) if ok else None
+    if avg_up is None:
+        up_html = '<div class="value">—</div>'
+    else:
+        up_html = f'<div class="value {"pos" if avg_up >= 0 else "neg"}">{arrow(avg_up)} {pct(avg_up)}</div>'
+
+    rated = [r for r in ok if r.forecast.rating_mark is not None]
+    bull = sum(r.forecast.rating_mark < 2.5 for r in rated)
+    bull_html = f'{round(bull / len(rated) * 100)}%' if rated else "—"
+    bull_note = f"{bull} of {len(rated)} tickers" if rated else "No ratings yet"
+
+    now = int(time.time())
+    upcoming = sorted(
+        (r for r in ok if r.forecast.next_earnings and r.forecast.next_earnings >= now),
+        key=lambda r: r.forecast.next_earnings,
+    )
+    if upcoming:
+        e = upcoming[0]
+        earn_val, earn_note = date_short(e.forecast.next_earnings, year=False), f"{escape(e.symbol)} · {escape(e.name or '')}"
+    else:
+        earn_val, earn_note = "—", "No upcoming dates"
+
+    return f"""<section class="kpis" aria-label="Summary">
+    <div class="card kpi"><div class="label">Tracked tickers</div><div class="value">{len(rows)}</div>
+      <div class="note">{len(ok)} with data · {pending} pending · {failed} failed</div></div>
+    <div class="card kpi"><div class="label">Avg upside to target</div>{up_html}<div class="note">Mean of analyst average targets</div></div>
+    <div class="card kpi"><div class="label">Rated buy or better</div><div class="value">{bull_html}</div><div class="note">{bull_note}</div></div>
+    <div class="card kpi"><div class="label">Next earnings</div><div class="value">{earn_val}</div><div class="note">{earn_note}</div></div>
+  </section>"""
+
+
+def rank_card(rows: list[TickerRow]) -> str:
+    d = sorted((r for r in rows if r.upside is not None), key=lambda r: r.upside, reverse=True)
+    if not d:
+        return ""
+    max_pos = max((r.upside for r in d if r.upside > 0), default=0.001)
+    max_neg = max((-r.upside for r in d if r.upside < 0), default=0)
+    zero = 22 if max_neg > 0 else 0
+    out = []
+    for r in d:
+        up = r.upside
+        w = up / max_pos * (100 - zero) if up >= 0 else -up / max_neg * zero
+        left = zero if up >= 0 else zero - w
+        color = "var(--pos)" if up >= 0 else "var(--neg)"
+        out.append(
+            f'<div class="rank-row"><span class="t">{escape(r.symbol)}</span>'
+            f'<div class="bar" style="--zero:{zero}%"><i style="background:{color};left:{left:.2f}%;width:{w:.2f}%"></i></div>'
+            f'<span class="v num {"pos" if up >= 0 else "neg"}">{arrow(up)} {pct(up)}</span></div>'
+        )
+    return (
+        '<div class="card"><div class="card-head"><h2>Upside to average target</h2>'
+        '<span class="sub">Ranked, highest first</span></div>'
+        f'<div class="card-body rank">{"".join(out)}</div></div>'
+    )
+
+
+def dist_card(rows: list[TickerRow]) -> str:
+    marks = [r.forecast.rating_mark for r in rows if r.forecast and r.forecast.rating_mark is not None]
+    if not marks:
+        return ""
+    # same five buckets and cut-offs as rating_label / the gauge, so "Sell" and "Strong sell" stay apart
+    cuts = [1.5, 2.5, 3.5, 4.5, float("inf")]
+    counts = [0] * 5
+    for m in marks:
+        counts[next(i for i, c in enumerate(cuts) if m < c)] += 1
+    groups = [(label, n, color) for (label, color), n in zip(GAUGE_ZONES, counts)]
+    bar = "".join(f'<i style="flex:{n};background:{c}"></i>' for _, n, c in groups if n)
+    lst = "".join(
+        f'<div><span><i style="background:{c}"></i>{label}</span><b class="num">{n}</b></div>' for label, n, c in groups
+    )
+    return (
+        f'<div class="card"><div class="card-head"><h2>Consensus rating mix</h2><span class="sub">{len(marks)} tickers</span></div>'
+        f'<div class="card-body"><div class="dist" role="img" aria-label="Rating mix">{bar}</div>'
+        f'<div class="dist-list">{lst}</div></div></div>'
+    )
+
+
+def empty_state() -> str:
+    return """<section class="card empty">
+    <svg width="56" height="56" viewBox="0 0 56 56" fill="none" aria-hidden="true"><rect x="2" y="2" width="52" height="52" rx="14" fill="var(--accent-soft)"/>
+      <path d="M14 38l9-10 7 7 12-16" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <h3>No tickers tracked yet</h3>
+    <p>Add a ticker in the box above. The crawler fetches its analyst forecast within seconds, then keeps it fresh in the background.</p></section>"""
+
+
+# ---- detail ----
+def big_range(f: Forecast) -> str:
+    if None in (f.pt_low, f.pt_high, f.pt_avg, f.price):
+        return '<p class="muted">Price target range unavailable for this ticker.</p>'
+    lo, hi = min(f.pt_low, f.price) * 0.97, max(f.pt_high, f.price) * 1.03
+
+    def p(x: float) -> float:
+        return (x - lo) / (hi - lo) * 100
+
+    def pin(x: float, label: str, cls: str = "", below: bool = False) -> str:
+        return (
+            f'<div class="pin {cls} {"below" if below else ""}" style="left:{p(x):.2f}%"><b>{price_fmt(x)}</b>{label}</div>'
+        )
+
+    return (
+        f'<div class="big-range"><div class="track"></div>'
+        f'<div class="fill" style="left:{p(f.pt_low):.2f}%;width:{p(f.pt_high) - p(f.pt_low):.2f}%"></div>'
+        f'{pin(f.pt_low, "Low")}{pin(f.pt_avg, "Average", "avg")}{pin(f.pt_high, "High")}{pin(f.price, "Price now", "px", True)}</div>'
+        f'<div class="legend" style="margin-top:18px;justify-content:space-between">'
+        + "".join(
+            f'<span>{label} <b class="num {"pos" if t / f.price - 1 >= 0 else "neg"}">'
+            f'{arrow(t / f.price - 1)} {pct(t / f.price - 1)}</b></span>'
+            for label, t in (("Upside to low", f.pt_low), ("Upside to average", f.pt_avg), ("Upside to high", f.pt_high))
+        )
+        + "</div>"
+    )
+
+
+GAUGE_ZONES = [
+    ("Strong buy", "var(--pos)"),
+    ("Buy", "color-mix(in srgb, var(--pos) 55%, var(--surface))"),
+    ("Neutral", "var(--warn)"),
+    ("Sell", "color-mix(in srgb, var(--neg) 55%, var(--surface))"),
+    ("Strong sell", "var(--neg)"),
+]
+
+
+def gauge(mark: float | None, counts: list[int] | None = None) -> str:
+    """Semicircle consensus gauge with one arc per rating, strong buy on the left, strong sell on the right.
+
+    ``mark`` is TradingView's 1-5 score; each rating owns one fifth of the arc (same cut-offs as ``rating_label``).
+    ``counts`` (analysts per rating, same order) are printed just outside their arc.
+    """
+    import math
+
+    if mark is None:
+        return '<p class="muted">No analyst ratings.</p>'
+    cx, cy, r = 110, 104, 82
+    pos = (min(5.5, max(0.5, mark)) - 0.5) / 5  # 0..1 along the arc; zone i covers [i/5, (i+1)/5)
+    theta = math.pi * (1 - pos)
+    x, y = cx + r * math.cos(theta), cy - r * math.sin(theta)
+
+    def point(frac: float, radius: float) -> tuple[float, float]:
+        t = math.pi * (1 - frac)
+        return cx + radius * math.cos(t), cy - radius * math.sin(t)
+
+    gap = 0.008
+    arcs, nums = [], []
+    for i, (_, color) in enumerate(GAUGE_ZONES):
+        x0, y0 = point(i / 5 + gap, r)
+        x1, y1 = point((i + 1) / 5 - gap, r)
+        arcs.append(
+            f'<path d="M{x0:.1f} {y0:.1f} A{r} {r} 0 0 1 {x1:.1f} {y1:.1f}" stroke="{color}" stroke-width="12" fill="none"/>'
+        )
+        if counts is not None:
+            tx, ty = point((i + 0.5) / 5, r + 17)
+            n = counts[i]
+            nums.append(
+                f'<text x="{tx:.1f}" y="{ty + 3.5:.1f}" text-anchor="middle" font-family="var(--mono)" font-size="11" '
+                f'fill="{"var(--fg)" if n else "var(--faint)"}" font-weight="{600 if n else 400}">{n}</text>'
+            )
+
+    label, _ = rating_label(mark)
+    return (
+        f'<svg viewBox="0 0 220 138" width="100%" style="max-width:280px" role="img" '
+        f'aria-label="Consensus {label}, score {mark:.2f} of 5">{"".join(arcs)}{"".join(nums)}'
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="9" fill="var(--fg)" stroke="var(--surface)" stroke-width="3"/>'
+        f'<text x="110" y="92" text-anchor="middle" font-family="var(--mono)" font-size="18" fill="var(--fg)">{label}</text>'
+        f'<text x="110" y="116" text-anchor="middle" font-size="11" fill="var(--muted)">score {mark:.2f} of 5</text>'
+        '<text x="28" y="132" text-anchor="middle" font-size="10" fill="var(--muted)">Strong buy</text>'
+        '<text x="192" y="132" text-anchor="middle" font-size="10" fill="var(--muted)">Strong sell</text></svg>'
+    )
+
+
+def facts(r: TickerRow) -> str:
+    f = r.forecast
+    secs = None if r.dead else max(0, r.next_fetch - int(time.time()))
+    rows = [
+        ("Next earnings", date_short(f.next_earnings) if f else "—"),
+        ("All-time high", price_fmt(f.ath) if f else "—"),
+        ("Rating score", f"{f.rating_mark:.2f} / 5" if f and f.rating_mark is not None else "—"),
+        ("Last fetched", ago(r.fetched_at)),
+        ("Next refresh", "—" if secs is None else "due now" if secs == 0 else f"in {duration(secs)}"),
+    ]
+    return '<dl class="facts" style="margin:0">' + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in rows) + "</dl>"

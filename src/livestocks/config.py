@@ -1,0 +1,21 @@
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="LIVESTOCKS_", env_file=".env", extra="ignore")
+
+    db_path: Path = Path("data/livestocks.db")
+    default_exchange: str = "IDX"
+    refresh_interval: int = 6 * 3600  # seconds between refreshes of one ticker
+    poll_interval: int = 30  # seconds between updater sweeps for due tickers
+    concurrency: int = 2
+    jitter_max: float = 3.0  # random delay before each fetch, seconds
+    request_timeout: float = 20.0
+    max_failures: int = 5  # consecutive failures before a ticker is marked dead (kept, no longer fetched)
+    host: str = "127.0.0.1"
+    port: int = 8080
+
+
+settings = Settings()

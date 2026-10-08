@@ -1,0 +1,33 @@
+[project]
+name = "livestocks"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Pandu Surya Tantra", email = "pandustantra@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "nicegui>=3.17.1",
+    "pydantic-settings>=2.15.0",
+    "websockets>=17.2",
+]
+
+[project.scripts]
+livestocks = "livestocks:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
