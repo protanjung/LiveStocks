@@ -8,7 +8,7 @@ from nicegui import app, ui
 from livestocks.config import Settings
 from livestocks.config import settings as default_settings
 from livestocks.logging_config import configure_logging
-from livestocks.services import Updater
+from livestocks.services import ForecastService, Updater
 from livestocks.storage import Store
 from livestocks.ui import register
 
@@ -20,11 +20,12 @@ def create_app(settings: Settings = default_settings) -> None:
     """
     store = Store(settings.db_path)
     updater = Updater(store, settings)
+    service = ForecastService(store, updater, settings)
 
     app.on_startup(updater.start)
     app.on_shutdown(updater.stop)
     app.on_shutdown(store.close)
-    register(store, updater, settings)
+    register(service, settings)
 
 
 def main() -> None:

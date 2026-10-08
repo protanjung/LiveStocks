@@ -1,8 +1,26 @@
 """Application services that coordinate crawling and storage.
-Today this is the background Updater that keeps tracked tickers fresh.
-The api and ui layers should talk to this package, not to crawler or storage.
+ForecastService is the only entry point the api and ui layers should use.
+The Updater keeps tracked tickers fresh in the background.
 """
 
+from livestocks.services.errors import (
+    CrawlTimeoutError,
+    ServiceError,
+    TickerNotFoundError,
+    UpstreamUnavailableError,
+)
+from livestocks.services.forecasts import ForecastService
+from livestocks.services.models import TickerView, TrackResult
 from livestocks.services.updater import Crawler, Updater
 
-__all__ = ["Crawler", "Updater"]
+__all__ = [
+    "CrawlTimeoutError",
+    "Crawler",
+    "ForecastService",
+    "ServiceError",
+    "TickerNotFoundError",
+    "TickerView",
+    "TrackResult",
+    "Updater",
+    "UpstreamUnavailableError",
+]

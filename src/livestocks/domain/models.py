@@ -159,6 +159,14 @@ class TrackedTicker:
     fetched_at: int | None
 
     @property
+    def id(self) -> TickerId:
+        """Return this ticker's exchange and symbol as a TickerId.
+        Use it to address the ticker in service calls.
+        Frozen, so it can be kept or used as a dictionary key.
+        """
+        return TickerId(self.exchange, self.symbol)
+
+    @property
     def key(self) -> str:
         """Return the EXCHANGE:SYMBOL form of this ticker.
         Matches TickerId.key.

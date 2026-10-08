@@ -11,16 +11,11 @@ from typing import Any
 from nicegui import app, ui
 
 from livestocks.config import Settings
-from livestocks.domain import (
-    InvalidTickerError,
-    PriceBar,
-    TrackedTicker,
-    parse_ticker,
-)
-from livestocks.services import Updater
-from livestocks.storage import Store
+from livestocks.domain import TickerId, TrackedTicker
+from livestocks.services import ForecastService, TickerView
 from livestocks.ui import components as c
 from livestocks.ui.chart import forecast_options
+from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
 from livestocks.ui.models import PageState
 from livestocks.ui.theme import CSS, FONTS_HEAD
@@ -52,10 +47,10 @@ class T(ui.element):
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 0}
 
 
-def register(store: Store, updater: Updater, settings: Settings) -> None:
-    """Define the dashboard and detail pages and bind them to the store and updater.
-    Pages read the store on a timer and refresh only when something changed.
-    Add, remove and retry actions call the store and wake the updater.
+def register(service: ForecastService, settings: Settings) -> None:
+    """Define the dashboard and detail pages and bind them to the forecast service.
+    Pages read the service on a timer and refresh only when something changed.
+    Add, remove and retry actions go through the service, which wakes the updater.
     """
 
     def tv_url(r: TrackedTicker) -> str:
@@ -79,18 +74,15 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
             if not raw.strip():
                 return
             try:
-                tid = parse_ticker(raw, settings.default_exchange)
-            except InvalidTickerError as err:
-                ui.notify(str(err), type="negative")
+                result = service.track(raw)
+            except HANDLED as err:
+                ui.notify(describe(err), type="negative")
                 return
-            exchange, symbol = tid.exchange, tid.symbol
-            if store.add_ticker(exchange, symbol):
-                ui.notify(f"Tracking {exchange}:{symbol}. Fetching forecast…", type="positive")
-                updater.wake()
+            key = result.ticker.key
+            if result.created:
+                ui.notify(f"Tracking {key}. Fetching forecast…", type="positive")
             else:
-                store.retry(exchange, symbol)  # re-adding a failed ticker retries it
-                updater.wake()
-                ui.notify(f"{exchange}:{symbol} is already tracked", type="info")
+                ui.notify(f"{key} is already tracked", type="info")
             field.value = ""
 
         with T("header").classes("top"), T("div").classes("wrap"):
@@ -131,12 +123,12 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
                 )
 
         def tick() -> None:
-            busy = len(updater.fetching)
+            busy = len(service.fetching())
             dot.classes(add="busy" if busy else "", remove="" if busy else "busy")
             if busy:
                 status.text = f"Fetching {busy} ticker{'s' if busy > 1 else ''}…"
             else:
-                nxt = updater.next_sweep_in()
+                nxt = service.seconds_until_next_refresh()
                 status.text = "Crawler idle" + (
                     " · no tickers"
                     if nxt is None
@@ -157,10 +149,10 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
         state = new_state()
 
         def sig() -> tuple:
-            rows = store.rows()
+            rows = service.list_tickers()
             return (
                 tuple((r.key, r.status, r.fetched_at, r.last_error, r.fail_count) for r in rows),
-                tuple(sorted(updater.fetching)),
+                tuple(sorted(service.fetching())),
                 state.sort_key,
                 state.sort_dir,
                 state.dark,
@@ -171,7 +163,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
 
         @ui.refreshable
         def body() -> None:
-            rows = store.rows()
+            rows = service.list_tickers()
             last["sig"] = sig()
             with T("div").classes("page-title"):
                 T("h1").text = "Forecast dashboard"
@@ -207,13 +199,12 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
             return sorted(ok, key=keys[state.sort_key], reverse=state.sort_dir < 0) + rest
 
         def remove(r: TrackedTicker) -> None:
-            store.remove_ticker(r.exchange, r.symbol)
+            service.remove(r.id)
             ui.notify(f"Removed {r.key}")
             body.refresh()
 
         def retry(r: TrackedTicker) -> None:
-            store.retry(r.exchange, r.symbol)
-            updater.wake()
+            service.retry(r.id)
             body.refresh()
 
         def table(rows: list[TrackedTicker]) -> None:
@@ -260,7 +251,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
             tr = T("tr").on("click", partial(ui.navigate.to, f"/t/{r.exchange}/{r.symbol}"))
             with tr:
                 ui.html(c.ticker_cell(r), sanitize=False, tag="td")
-                busy = r.key in updater.fetching
+                busy = r.key in service.fetching()
                 if f is None:
                     if r.status == "failed":
                         msg = f'<td colspan="6" class="err">⚠ {escape(r.last_error or "failed")} · gave up after {r.fail_count} tries</td>'
@@ -319,27 +310,26 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
     # ---- detail ----
     @ui.page("/t/{exchange}/{symbol}")
     def detail(exchange: str, symbol: str) -> None:
-        exchange, symbol = exchange.upper(), symbol.upper()
+        tid = TickerId(exchange.upper(), symbol.upper())
         state = new_state()
         last: dict[str, Any] = {"sig": None}
 
-        def sig_of(r: TrackedTicker | None) -> tuple | None:
-            ex = store.extras(exchange, symbol)
-            return (r.fetched_at, r.status, r.last_error, ex[0] if ex else None) if r else None
+        def sig_of(view: TickerView | None) -> tuple[Any, ...] | None:
+            return view.signature if view else None
 
         @ui.refreshable
         def body() -> None:
-            r = store.row(exchange, symbol)
-            last["sig"] = sig_of(r)
-            ex = store.extras(exchange, symbol)
-            extras = ex[1] if ex else None
+            view = service.get_ticker(tid)
+            last["sig"] = sig_of(view)
+            r = view.ticker if view else None
+            extras = view.extras if view else None
             counts = (
                 [n for _, n in extras.rating_counts] if extras and extras.rating_counts else None
             )
             with T("div").classes("crumb"):
                 T("button").on("click", lambda: ui.navigate.to("/")).text = "← Dashboard"
                 T("span").text = "/"
-                T("span").text = f"{exchange}:{symbol}"
+                T("span").text = tid.key
 
             if r is None:
                 with T("section").classes("card empty"):
@@ -401,16 +391,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
                                 b.props(f'aria-pressed="{str(state.range == k).lower()}"').text = k
                     with T("div").classes("card-body chartbody"):
                         since = int(time.time()) - RANGES[state.range] if RANGES[state.range] else 0
-                        bars = store.prices(exchange, symbol, since)
-                        if (
-                            len(bars) < 2
-                        ):  # no price feed for this exchange: fall back to crawl snapshots
-                            snaps = [
-                                PriceBar(ts, fc.price)
-                                for ts, fc in store.history(exchange, symbol, since)
-                                if fc.price
-                            ]
-                            bars = snaps or bars
+                        bars = service.price_history(tid, since)
                         ui.echart(
                             forecast_options(bars, f, state.dark, int(time.time() * 1000))
                         ).style("height:100%;min-height:380px;width:100%")
@@ -476,8 +457,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
         footer()
 
         def maybe_refresh() -> None:
-            r = store.row(exchange, symbol)
-            if sig_of(r) != last["sig"]:
+            if sig_of(service.get_ticker(tid)) != last["sig"]:
                 body.refresh()
 
         ui.timer(3.0, maybe_refresh)
