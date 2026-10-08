@@ -40,7 +40,11 @@ def create_engine(path: Path | str) -> AsyncEngine:
     return engine
 
 
-def _alembic_config(path: Path) -> Config:
+def alembic_config(path: Path) -> Config:
+    """Build the Alembic configuration for a database file, without needing alembic.ini.
+    It points at the migrations folder in this package and at the file through a sync URL.
+    upgrade_database uses it, and tests use it to run Alembic commands such as check.
+    """
     config = Config()
     config.set_main_option("script_location", str(MIGRATIONS_DIR))
     config.set_main_option("sqlalchemy.url", f"sqlite:///{path.as_posix()}")
@@ -53,7 +57,7 @@ def upgrade_database(path: Path | str) -> None:
     Raises MigrationError if such a database is older than that scheme's last version.
     """
     target = _file_path(path)
-    config = _alembic_config(target)
+    config = alembic_config(target)
     engine = create_sync_engine(f"sqlite:///{target.as_posix()}")
     try:
         with engine.connect() as connection:

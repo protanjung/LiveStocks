@@ -27,7 +27,7 @@ flowchart TD
 |---|---|---|
 | `domain` | Value objects (`Forecast`, `Extras`, `TrackedTicker`), ticker parsing, rating rules. No I/O. | nothing |
 | `crawler` | Fetching and parsing TradingView and Yahoo data, retries. Knows nothing about the database. | `domain` |
-| `storage` | SQLite persistence and schema migrations. Knows nothing about the internet. | `domain` |
+| `storage` | Async SQLite persistence and Alembic migrations. Knows nothing about the internet. | `domain` |
 | `services` | The updater loop and `ForecastService`, the single entry point for everything above. | `domain`, `crawler`, `storage` |
 | `api` | HTTP routes, response models and error mapping. | `domain`, `services` |
 | `ui` | NiceGUI pages and HTML/chart builders. | `domain`, `services` |
@@ -98,14 +98,25 @@ Several simultaneous requests for the same new ticker share one crawl. If the wa
 
 ## Persistence
 
-`storage.Store` wraps one SQLite connection behind a lock. The schema is versioned with `PRAGMA user_version`:
-`storage/migrations.py` lists the SQL steps in order and applies the pending ones when a `Store` is opened. A database
-that predates versioning is adopted by the idempotent first step, and a database written by a newer release is rejected
-instead of being damaged.
+`storage.Store` is an async SQLite store: SQLModel table classes, an SQLAlchemy `AsyncSession` over `aiosqlite`, write-ahead
+logging and a 30 second busy timeout. Each method runs in its own short transaction and returns domain dataclasses;
+`storage/mapping.py` converts between rows and dataclasses, so nothing outside `storage` sees an ORM object.
+
+The schema is managed by [Alembic](https://alembic.sqlalchemy.org). `Store.initialize()` runs the migrations to the latest
+revision in a worker thread when the app starts (the Alembic environment uses a plain synchronous connection). A database
+created by the older `PRAGMA user_version` scheme is stamped and adopted; one older than that scheme's last version is
+rejected with a clear error instead of being damaged.
 
 | Table | Content |
 |---|---|
 | `tickers` | Tracked tickers with their schedule and failure state. |
-| `forecasts` | One row per crawl: the history of targets and ratings. |
+| `forecasts` | One row per crawl: the history of targets and ratings. The newest row is the current forecast. |
 | `prices` | Daily closes, replaced by timestamp on every crawl. |
 | `extras` | The latest EPS, revenue and rating counts as JSON. |
+
+## Retries and logging
+
+Transient crawl failures (`UpstreamError`) are retried by [tenacity](https://tenacity.readthedocs.io) with exponential
+backoff and a second of jitter, at most 30 seconds between attempts; a 404 or a parse error is never retried. Logging
+uses [loguru](https://loguru.readthedocs.io): records carry bound fields such as the ticker, and standard-library loggers
+(uvicorn, httpx, Alembic) are routed into the same sink.

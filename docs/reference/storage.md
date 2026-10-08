@@ -2,7 +2,9 @@
 
 ::: livestocks.storage.store
 
-::: livestocks.storage.migrations
+::: livestocks.storage.db
+
+::: livestocks.storage.mapping
 
 ::: livestocks.storage.models
 

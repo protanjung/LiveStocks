@@ -1,9 +1,10 @@
 import sqlite3
 
 import pytest
+from alembic import command
 
 from livestocks.storage import MigrationError, Store
-from livestocks.storage.db import upgrade_database
+from livestocks.storage.db import alembic_config, upgrade_database
 
 BASELINE = "0001"
 
@@ -120,3 +121,11 @@ class TestStoreInitialize:
 
         assert [r.key for r in await second.rows()] == ["IDX:TLKM"]
         await second.close()
+
+
+class TestModelsMatchMigrations:
+    def test_models_and_migrations_describe_the_same_schema(self, tmp_path):
+        path = tmp_path / "check.db"
+        upgrade_database(path)
+
+        command.check(alembic_config(path))  # raises if autogenerate would find a difference

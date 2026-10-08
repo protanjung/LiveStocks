@@ -46,17 +46,30 @@ uv run pre-commit install    # run the checks on every commit
 - **Errors.** Each subsystem raises its own exceptions from its `errors.py`. A bare `except` is never used;
   `except Exception` is allowed only in background tasks and best-effort extras, must log, and carries a
   `# noqa: BLE001` with the reason.
-- **Logging.** The standard `logging` module, one logger per module. No `print`.
+- **Logging.** loguru's `logger`, with context bound as fields (`logger.bind(ticker=key)`). No `print`, no direct use of the
+  standard `logging` module except in `logging_config.py`.
 - **Tests.** Plain pytest inside `Test*` classes named after the unit under test, methods named
   `test_<behaviour>_<condition>`. Shared fixtures live in `tests/conftest.py`. The test tree mirrors `src/`. The NiceGUI page wiring in `ui/pages.py` is the main gap: it needs a browser, so it is
   checked by hand and through the pure builders in `ui/components.py`, which are unit-tested.
 
 ## Changing the database schema
 
-Append a SQL step to `MIGRATIONS` in `storage/migrations.py` (and its DDL to `storage/models.py`). Opening a `Store`
-applies pending steps in order and records the version in `PRAGMA user_version`. Never edit an earlier step: databases
-that already ran it will not run it again. Add a test in `tests/unit/storage/test_migrations.py` that starts from the
-previous version with a row in it and checks the row survives.
+The schema lives in the SQLModel classes in `storage/models.py` and is versioned with Alembic. `alembic.ini` at the
+repository root points the command line at the migrations and the development database. After editing a model:
+
+```bash
+uv run alembic revision --autogenerate -m "describe the change"   # writes storage/migrations/versions/NNNN_*.py
+uv run alembic upgrade head                                        # applies it to data/livestocks.db
+uv run alembic check                                               # fails if models and migrations disagree
+```
+
+Review the generated revision and fix it by hand where needed; SQLite cannot alter some things in place, so batch mode
+is on. The app upgrades its database to the latest revision on start-up. Never edit a revision that has shipped; add a
+new one. Add a test in `tests/unit/storage/test_migrations.py` that starts from the previous schema with a row in it and
+checks the row survives. A test also runs `alembic check`, so a model change without a revision fails the suite.
+
+Tests build their schema straight from the models (`Store(path, migrate=False)`) for speed and run the real migrations
+only in `test_migrations.py`.
 
 ## Adding a subsystem
 

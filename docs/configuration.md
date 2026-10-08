@@ -14,7 +14,8 @@ file in the working directory. The defaults suit a local single-user run. Durati
 | `LIVESTOCKS_REQUEST_TIMEOUT` | `20.0` | Timeout of one HTTP request to TradingView or Yahoo. |
 | `LIVESTOCKS_MAX_FAILURES` | `5` | Failures in a row before a ticker is marked failed and no longer crawled. |
 | `LIVESTOCKS_API_WAIT_SECONDS` | `30.0` | How long the API waits for a first crawl before answering 504. |
-| `LIVESTOCKS_LOG_LEVEL` | `INFO` | Python logging level. |
+| `LIVESTOCKS_LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
+| `LIVESTOCKS_LOG_JSON` | `false` | Write one JSON object per log line, for log collectors. |
 | `LIVESTOCKS_HOST` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` to accept other devices. |
 | `LIVESTOCKS_PORT` | `8080` | Port to listen on. |
 
