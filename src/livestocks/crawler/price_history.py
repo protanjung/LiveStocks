@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from livestocks.crawler.errors import ParseError, UpstreamError
+from livestocks.crawler.retry import with_retries
 from livestocks.domain import PriceBar
 
 URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
@@ -64,19 +65,24 @@ async def fetch_prices(
 ) -> list[PriceBar]:
     """Download daily closes for the last range_ (default two years) from Yahoo.
     Returns an empty list for exchanges without a Yahoo mapping.
-    Network and HTTP failures raise UpstreamError.
+    Network and HTTP failures are retried once, then raise UpstreamError.
     """
     ysym = yahoo_symbol(exchange, symbol)
     if ysym is None:
         return []
-    try:
-        resp = await client.get(
-            URL.format(symbol=ysym),
-            params={"range": range_, "interval": "1d"},
-            headers={"User-Agent": "Mozilla/5.0"},
-        )
-    except httpx.HTTPError as e:
-        raise UpstreamError(f"price history network error: {e.__class__.__name__}") from e
-    if resp.status_code != 200:
-        raise UpstreamError(f"price history HTTP {resp.status_code}")
-    return parse_chart(resp.json())
+    url = URL.format(symbol=ysym)
+
+    async def attempt() -> list[PriceBar]:
+        try:
+            resp = await client.get(
+                url,
+                params={"range": range_, "interval": "1d"},
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+        except httpx.HTTPError as e:
+            raise UpstreamError(f"price history network error: {e.__class__.__name__}") from e
+        if resp.status_code != 200:
+            raise UpstreamError(f"price history HTTP {resp.status_code}")
+        return parse_chart(resp.json())
+
+    return await with_retries(attempt, attempts=2)

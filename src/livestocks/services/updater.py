@@ -5,19 +5,17 @@ Callers can watch a ticker to learn when its running or next crawl has finished.
 
 import asyncio
 import contextlib
-import logging
 import random
 import time
 from collections.abc import Awaitable, Callable
 
 import httpx
+from loguru import logger
 
 from livestocks.config import Settings
 from livestocks.crawler import CrawlError, CrawlResult, NotFoundError, UpstreamError, crawl_ticker
 from livestocks.domain import ErrorKind
 from livestocks.storage import Store
-
-log = logging.getLogger("livestocks.updater")
 
 Crawler = Callable[[str, str], Awaitable[CrawlResult]]
 
@@ -112,8 +110,8 @@ class Updater:
                 await self.sweep()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                log.exception("sweep failed")
+            except Exception:  # noqa: BLE001 - the loop must survive any single sweep failure
+                logger.exception("sweep failed")
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), timeout=self.settings.poll_interval)
             self._wake.clear()
@@ -158,17 +156,17 @@ class Updater:
                 await self.store.upsert_prices(exchange, symbol, result.prices)
             if result.extras is not None:
                 await self.store.save_extras(exchange, symbol, result.extras)
-            log.info("updated %s", key)
+            logger.bind(ticker=key).info("updated")
             return None
         except CrawlError as e:
-            log.warning("fetch %s failed: %s", key, e)
+            logger.bind(ticker=key).warning("fetch failed: {}", e)
             kind = ErrorKind.NOT_FOUND if isinstance(e, NotFoundError) else ErrorKind.UPSTREAM
             await self.store.record_failure(
                 exchange, symbol, str(e), s.refresh_interval, s.max_failures, kind=kind
             )
             return e
-        except Exception as e:
-            log.exception("unexpected error fetching %s", key)
+        except Exception as e:  # noqa: BLE001 - a bug in one crawl must not stop the others
+            logger.bind(ticker=key).exception("unexpected error while fetching")
             failure = UpstreamError(f"unexpected: {e.__class__.__name__}")
             await self.store.record_failure(
                 exchange,

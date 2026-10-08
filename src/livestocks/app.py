@@ -57,7 +57,7 @@ def main() -> None:
     Host, port and log level come from LIVESTOCKS_* environment variables.
     This is the target of the livestocks console script.
     """
-    configure_logging(default_settings.log_level)
+    configure_logging(default_settings.log_level, json=default_settings.log_json)
     create_app()
     ui.run(
         host=default_settings.host,

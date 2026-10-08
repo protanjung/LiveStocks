@@ -47,11 +47,7 @@ class TestFetchForecast:
         assert route.call_count == 1
 
     @respx.mock
-    async def test_429_is_retried_then_raises_upstream_error(self, monkeypatch):
-        async def no_sleep(_):
-            return None
-
-        monkeypatch.setattr("livestocks.crawler.retry.asyncio.sleep", no_sleep)
+    async def test_429_is_retried_then_raises_upstream_error(self):
         route = respx.get(url__regex=r".*").mock(return_value=httpx.Response(429))
 
         async with httpx.AsyncClient() as client:

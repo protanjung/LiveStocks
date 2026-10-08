@@ -63,3 +63,15 @@ async def store(tmp_path):
     await s.initialize()
     yield s
     await s.close()
+
+
+@pytest.fixture(autouse=True)
+def retry_sleeps(monkeypatch):
+    """Skip real retry delays in every test and record the delays that were requested."""
+    recorded: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        recorded.append(seconds)
+
+    monkeypatch.setattr("livestocks.crawler.retry._sleep", fake_sleep)
+    return recorded

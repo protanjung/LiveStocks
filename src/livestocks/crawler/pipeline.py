@@ -4,17 +4,15 @@ Optional failures are logged and returned in the result instead of raised.
 """
 
 import asyncio
-import logging
 from collections.abc import Awaitable
 
 import httpx
+from loguru import logger
 
 from livestocks.crawler.forecast_page import fetch_forecast
 from livestocks.crawler.models import CrawlResult
 from livestocks.crawler.price_history import fetch_prices
 from livestocks.crawler.quote_stream import fetch_extras
-
-log = logging.getLogger(__name__)
 
 
 async def _best_effort[T](call: Awaitable[T], what: str, key: str) -> tuple[T | None, str | None]:
@@ -22,7 +20,7 @@ async def _best_effort[T](call: Awaitable[T], what: str, key: str) -> tuple[T | 
     try:
         return await call, None
     except Exception as e:  # noqa: BLE001 - prices and extras are optional and must not fail the crawl
-        log.warning("%s for %s unavailable: %s", what, key, e)
+        logger.bind(ticker=key).warning("{} unavailable: {}", what, e)
         return None, str(e) or e.__class__.__name__
 
 

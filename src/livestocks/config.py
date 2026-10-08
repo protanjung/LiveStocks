@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     )
     api_wait_seconds: float = 30.0  # how long the forecast endpoint waits for a first crawl
     log_level: str = "INFO"
+    log_json: bool = False  # one JSON object per log line, for log collectors
     host: str = "127.0.0.1"
     port: int = 8080
 
