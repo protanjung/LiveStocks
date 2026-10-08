@@ -12,15 +12,12 @@ from typing import Any
 
 import websockets
 
-from .models import Extras, Period
+from livestocks.crawler.errors import UpstreamError
+from livestocks.domain import Extras, Period
 
 WS_URL = "wss://data.tradingview.com/socket.io/websocket?from=symbols%2F{exchange}-{symbol}%2Fforecast-actuals-and-estimates%2F"
 ORIGIN = "https://www.tradingview.com"
 ANNUAL_KEEP, QUARTER_KEEP = 11, 16  # periods shown per chart, counting back from the last one with data
-
-
-class QuoteError(Exception):
-    pass
 
 
 def _frame(method: str, params: list) -> str:
@@ -77,15 +74,15 @@ async def fetch_quote(exchange: str, symbol: str, timeout: float = 25.0) -> dict
                         if q.get("s") == "ok":
                             fields.update(q.get("v") or {})
                         else:
-                            raise QuoteError(f"quote status {q.get('s')}")
+                            raise UpstreamError(f"quote status {q.get('s')}")
                     elif data.get("m") == "quote_completed":
                         done = True
-    except QuoteError:
+    except UpstreamError:
         raise
     except (asyncio.TimeoutError, OSError, websockets.WebSocketException) as e:
-        raise QuoteError(f"websocket error: {e.__class__.__name__}") from e
+        raise UpstreamError(f"websocket error: {e.__class__.__name__}") from e
     if not fields:
-        raise QuoteError("no quote data")
+        raise UpstreamError("no quote data")
     return fields
 
 

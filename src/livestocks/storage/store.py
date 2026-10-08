@@ -3,76 +3,20 @@
 Operations are tiny and local, so they are called synchronously from the event loop under a lock.
 """
 
+import json
 import sqlite3
 import threading
 import time
+from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 
-import json
-from dataclasses import asdict
+from livestocks.domain import Extras, Forecast, Period, PriceBar, TrackedTicker
+from livestocks.storage.migrations import migrate
+from livestocks.storage.models import FORECAST_COLUMNS, TICKER_ROWS_SQL
 
-from .models import Extras, Forecast, Period, TickerRow
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS tickers (
-    exchange    TEXT NOT NULL,
-    symbol      TEXT NOT NULL,
-    name        TEXT,
-    added_at    INTEGER NOT NULL,
-    last_fetch  INTEGER,
-    next_fetch  INTEGER NOT NULL DEFAULT 0,
-    last_error  TEXT,
-    fail_count  INTEGER NOT NULL DEFAULT 0,
-    dead        INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (exchange, symbol)
-);
-CREATE TABLE IF NOT EXISTS forecasts (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    exchange      TEXT NOT NULL,
-    symbol        TEXT NOT NULL,
-    fetched_at    INTEGER NOT NULL,
-    name          TEXT,
-    price         REAL,
-    change_pct    REAL,
-    pt_avg        REAL,
-    pt_high       REAL,
-    pt_low        REAL,
-    n_analysts    INTEGER,
-    rating_mark   REAL,
-    n_ratings     INTEGER,
-    ath           REAL,
-    next_earnings INTEGER
-);
-CREATE TABLE IF NOT EXISTS prices (
-    exchange TEXT NOT NULL,
-    symbol   TEXT NOT NULL,
-    ts       INTEGER NOT NULL,
-    close    REAL NOT NULL,
-    PRIMARY KEY (exchange, symbol, ts)
-);
-CREATE TABLE IF NOT EXISTS extras (
-    exchange   TEXT NOT NULL,
-    symbol     TEXT NOT NULL,
-    fetched_at INTEGER NOT NULL,
-    data       TEXT NOT NULL,
-    PRIMARY KEY (exchange, symbol)
-);
-CREATE INDEX IF NOT EXISTS forecasts_ticker_time ON forecasts (exchange, symbol, fetched_at);
-"""
-
-_FORECAST_COLS = (
-    "name, price, change_pct, pt_avg, pt_high, pt_low, n_analysts, rating_mark, n_ratings, ath, next_earnings"
-)
-# Latest forecast per ticker, joined to the ticker row.
-_ROWS_SQL = f"""
-SELECT t.exchange, t.symbol, t.name AS tname, t.added_at, t.last_fetch, t.next_fetch, t.last_error, t.fail_count, t.dead,
-       f.fetched_at, f.name, f.price, f.change_pct, f.pt_avg, f.pt_high, f.pt_low, f.n_analysts,
-       f.rating_mark, f.n_ratings, f.ath, f.next_earnings
-FROM tickers t
-LEFT JOIN forecasts f ON f.id = (
-    SELECT id FROM forecasts WHERE exchange = t.exchange AND symbol = t.symbol ORDER BY fetched_at DESC, id DESC LIMIT 1
-)
-"""
+_FORECAST_COLS = FORECAST_COLUMNS
+_ROWS_SQL = TICKER_ROWS_SQL
 
 
 def _forecast(row: sqlite3.Row) -> Forecast:
@@ -84,8 +28,8 @@ def _forecast(row: sqlite3.Row) -> Forecast:
     )
 
 
-def _ticker_row(row: sqlite3.Row) -> TickerRow:
-    return TickerRow(
+def _ticker_row(row: sqlite3.Row) -> TrackedTicker:
+    return TrackedTicker(
         exchange=row["exchange"], symbol=row["symbol"], name=row["name"] or row["tname"],
         added_at=row["added_at"], last_fetch=row["last_fetch"], next_fetch=row["next_fetch"], last_error=row["last_error"],
         fail_count=row["fail_count"], dead=bool(row["dead"]),
@@ -103,7 +47,7 @@ class Store:
         self._lock = threading.Lock()
         with self._lock:
             self._db.execute("PRAGMA journal_mode=WAL")
-            self._db.executescript(SCHEMA)
+            migrate(self._db)
 
     def close(self) -> None:
         with self._lock:
@@ -140,11 +84,11 @@ class Store:
             self._db.execute("UPDATE tickers SET next_fetch = 0 WHERE dead = 0")
 
     # ---- reads ----
-    def rows(self) -> list[TickerRow]:
+    def rows(self) -> list[TrackedTicker]:
         with self._lock:
             return [_ticker_row(r) for r in self._db.execute(_ROWS_SQL + " ORDER BY t.added_at, t.symbol")]
 
-    def row(self, exchange: str, symbol: str) -> TickerRow | None:
+    def row(self, exchange: str, symbol: str) -> TrackedTicker | None:
         with self._lock:
             r = self._db.execute(
                 _ROWS_SQL + " WHERE t.exchange = ? AND t.symbol = ?", (exchange, symbol)
@@ -160,19 +104,19 @@ class Store:
             )
             return [(r["fetched_at"], _forecast(r)) for r in cur]
 
-    def prices(self, exchange: str, symbol: str, since: int = 0) -> list[tuple[int, float]]:
+    def prices(self, exchange: str, symbol: str, since: int = 0) -> list[PriceBar]:
         with self._lock:
             cur = self._db.execute(
                 "SELECT ts, close FROM prices WHERE exchange = ? AND symbol = ? AND ts >= ? ORDER BY ts",
                 (exchange, symbol, since),
             )
-            return [(r["ts"], r["close"]) for r in cur]
+            return [PriceBar(r["ts"], r["close"]) for r in cur]
 
-    def upsert_prices(self, exchange: str, symbol: str, bars: list[tuple[int, float]]) -> None:
+    def upsert_prices(self, exchange: str, symbol: str, bars: Sequence[PriceBar]) -> None:
         with self._lock, self._db:
             self._db.executemany(
                 "INSERT OR REPLACE INTO prices (exchange, symbol, ts, close) VALUES (?, ?, ?, ?)",
-                [(exchange, symbol, ts, close) for ts, close in bars],
+                [(exchange, symbol, b.ts, b.close) for b in bars],
             )
 
     def save_extras(self, exchange: str, symbol: str, extras: Extras, now: int | None = None) -> None:

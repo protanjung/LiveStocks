@@ -1,20 +1,19 @@
 """NiceGUI pages: dashboard (`/`) and ticker detail (`/t/{exchange}/{symbol}`)."""
 
 import time
-from dataclasses import dataclass
 from html import escape
 
 from nicegui import app, ui
 
-from ..config import Settings
-from ..models import TickerRow, rating_label
-from ..store import Store
-from ..tickers import parse_ticker
-from ..updater import Updater
-from . import components as c
-from .chart import forecast_options
-from .financials import financial_options, fin_table
-from .theme import CSS, FONTS_HEAD
+from livestocks.config import Settings
+from livestocks.domain import InvalidTickerError, PriceBar, TrackedTicker, parse_ticker, rating_label
+from livestocks.services import Updater
+from livestocks.storage import Store
+from livestocks.ui import components as c
+from livestocks.ui.chart import forecast_options
+from livestocks.ui.financials import fin_table, financial_options
+from livestocks.ui.models import PageState
+from livestocks.ui.theme import CSS, FONTS_HEAD
 
 
 
@@ -33,18 +32,8 @@ class T(ui.element):
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 0}
 
 
-@dataclass
-class PageState:
-    dark: bool
-    sort_key: str = "up"
-    sort_dir: int = -1
-    range: str = "1Y"
-    eps_period: str = "Annual"
-    rev_period: str = "Annual"
-
-
 def register(store: Store, updater: Updater, settings: Settings) -> None:
-    def tv_url(r: TickerRow) -> str:
+    def tv_url(r: TrackedTicker) -> str:
         return f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
 
     # ---- shared shell ----
@@ -65,10 +54,11 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
             if not raw.strip():
                 return
             try:
-                exchange, symbol = parse_ticker(raw, settings.default_exchange)
-            except ValueError as err:
+                tid = parse_ticker(raw, settings.default_exchange)
+            except InvalidTickerError as err:
                 ui.notify(str(err), type="negative")
                 return
+            exchange, symbol = tid.exchange, tid.symbol
             if store.add_ticker(exchange, symbol):
                 ui.notify(f"Tracking {exchange}:{symbol}. Fetching forecast…", type="positive")
                 updater.wake()
@@ -165,7 +155,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
                 state.sort_key, state.sort_dir = key, (1 if key == "ticker" else -1)
             body.refresh()
 
-        def sorted_rows(rows: list[TickerRow]) -> list[TickerRow]:
+        def sorted_rows(rows: list[TrackedTicker]) -> list[TrackedTicker]:
             keys = {
                 "ticker": lambda r: r.symbol,
                 "price": lambda r: r.forecast.price or 0,
@@ -177,17 +167,17 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
             rest = [r for r in rows if not r.forecast]
             return sorted(ok, key=keys[state.sort_key], reverse=state.sort_dir < 0) + rest
 
-        def remove(r: TickerRow) -> None:
+        def remove(r: TrackedTicker) -> None:
             store.remove_ticker(r.exchange, r.symbol)
             ui.notify(f"Removed {r.key}")
             body.refresh()
 
-        def retry(r: TickerRow) -> None:
+        def retry(r: TrackedTicker) -> None:
             store.retry(r.exchange, r.symbol)
             updater.wake()
             body.refresh()
 
-        def table(rows: list[TickerRow]) -> None:
+        def table(rows: list[TrackedTicker]) -> None:
             def th(label: str, key: str | None = None, right: bool = False) -> None:
                 el = T("th").classes("r" if right else "")
                 with el:
@@ -225,7 +215,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
                             for r in sorted_rows(rows):
                                 row_view(r)
 
-        def row_view(r: TickerRow) -> None:
+        def row_view(r: TrackedTicker) -> None:
             f = r.forecast
             tr = T("tr").on("click", lambda r=r: ui.navigate.to(f"/t/{r.exchange}/{r.symbol}"))
             with tr:
@@ -282,7 +272,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
         state = new_state()
         last = {"sig": None}
 
-        def sig_of(r: TickerRow | None) -> tuple | None:
+        def sig_of(r: TrackedTicker | None) -> tuple | None:
             ex = store.extras(exchange, symbol)
             return (r.fetched_at, r.status, r.last_error, ex[0] if ex else None) if r else None
 
@@ -354,7 +344,7 @@ def register(store: Store, updater: Updater, settings: Settings) -> None:
                         since = int(time.time()) - RANGES[state.range] if RANGES[state.range] else 0
                         bars = store.prices(exchange, symbol, since)
                         if len(bars) < 2:  # no price feed for this exchange: fall back to crawl snapshots
-                            snaps = [(ts, fc.price) for ts, fc in store.history(exchange, symbol, since) if fc.price]
+                            snaps = [PriceBar(ts, fc.price) for ts, fc in store.history(exchange, symbol, since) if fc.price]
                             bars = snaps or bars
                         ui.echart(forecast_options(bars, f, state.dark, int(time.time() * 1000))).style(
                             "height:100%;min-height:380px;width:100%"

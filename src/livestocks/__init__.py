@@ -1,3 +1,3 @@
-from .main import main
+"""LiveStocks: analyst forecast dashboard fed by a TradingView crawler."""
 
-__all__ = ["main"]
+__version__ = "0.1.0"

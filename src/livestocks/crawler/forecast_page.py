@@ -4,14 +4,15 @@ The page embeds its data as JSON in ``<script type="application/prs.init-data+js
 keys are hashed and change between deploys, so blocks are located by the keys they contain instead.
 """
 
-import asyncio
 import json
 import re
 from typing import Any
 
 import httpx
 
-from .models import Forecast
+from livestocks.crawler.errors import NotFoundError, ParseError, UpstreamError
+from livestocks.crawler.retry import with_retries
+from livestocks.domain import Forecast
 
 URL = "https://www.tradingview.com/symbols/{exchange}-{symbol}/forecast-price-target/"
 HEADERS = {
@@ -23,18 +24,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 _SCRIPT = re.compile(r'<script type="application/prs\.init-data\+json">(.*?)</script>', re.S)
-
-
-class ScrapeError(Exception):
-    """Transient failure (network, rate limit, server error). Worth retrying."""
-
-
-class NotFoundError(ScrapeError):
-    """Ticker does not exist on TradingView, or has no forecast page."""
-
-
-class ParseError(ScrapeError):
-    """Page loaded but expected data was missing; the page layout probably changed."""
 
 
 def _find(obj: Any, key: str) -> Any:
@@ -113,20 +102,18 @@ def parse_html(html: str, exchange: str, symbol: str) -> Forecast:
 async def fetch_forecast(
     client: httpx.AsyncClient, exchange: str, symbol: str, retries: int = 2
 ) -> Forecast:
+    """Fetch the forecast page and parse it, retrying transient upstream failures ``retries`` times."""
     url = URL.format(exchange=exchange, symbol=symbol)
-    last: Exception | None = None
-    for attempt in range(retries + 1):
+
+    async def attempt() -> Forecast:
         try:
             resp = await client.get(url, headers=HEADERS, follow_redirects=True)
         except httpx.HTTPError as e:
-            last = ScrapeError(f"network error: {e.__class__.__name__}")
-        else:
-            if resp.status_code == 404:
-                raise NotFoundError("not found on TradingView")
-            if resp.status_code == 200:
-                return parse_html(resp.text, exchange, symbol)
-            last = ScrapeError(f"HTTP {resp.status_code}")
-        if attempt < retries:
-            await asyncio.sleep(2**attempt * 2)
-    assert last is not None
-    raise last
+            raise UpstreamError(f"network error: {e.__class__.__name__}") from e
+        if resp.status_code == 404:
+            raise NotFoundError("not found on TradingView")
+        if resp.status_code != 200:
+            raise UpstreamError(f"HTTP {resp.status_code}")
+        return parse_html(resp.text, exchange, symbol)
+
+    return await with_retries(attempt, attempts=retries + 1)

@@ -4,8 +4,10 @@ History is the daily close line; from the latest close a cone fans out one year 
 analyst targets, with a flat line at the current price and labelled pills at the right edge.
 """
 
-from ..models import Forecast
-from .components import price_fmt
+from collections.abc import Sequence
+
+from livestocks.domain import Forecast, PriceBar
+from livestocks.ui.components import price_fmt
 
 YEAR_MS = 365 * 86400 * 1000
 MONO = "IBM Plex Mono, monospace"
@@ -56,10 +58,10 @@ def _target_line(
     }
 
 
-def forecast_options(bars: list[tuple[int, float]], f: Forecast, dark: bool, now_ms: int) -> dict:
+def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: int) -> dict:
     """``bars`` are (unix seconds, close) already filtered to the visible window."""
     col = COLORS[dark]
-    data = [[ts * 1000, close] for ts, close in bars]
+    data = [[b.ts * 1000, b.close] for b in bars]
     price = f.price if f.price is not None else (data[-1][1] if data else None)
     t0 = data[-1][0] if data else now_ms
     t1 = t0 + YEAR_MS

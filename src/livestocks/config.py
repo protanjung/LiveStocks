@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     jitter_max: float = 3.0  # random delay before each fetch, seconds
     request_timeout: float = 20.0
     max_failures: int = 5  # consecutive failures before a ticker is marked dead (kept, no longer fetched)
+    log_level: str = "INFO"
     host: str = "127.0.0.1"
     port: int = 8080
 

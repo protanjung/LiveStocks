@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from html import escape
 
-from ..models import Forecast, TickerRow, rating_label
+from livestocks.domain import Forecast, TrackedTicker, rating_label
 
 
 # ---- formatting ----
@@ -99,7 +99,7 @@ def range_bar(f: Forecast) -> str:
     )
 
 
-def ticker_cell(r: TickerRow) -> str:
+def ticker_cell(r: TrackedTicker) -> str:
     return (
         f'<div class="tk"><div class="badge-ex">{escape(r.exchange)}</div>'
         f'<div><b>{escape(r.symbol)}</b><span class="nm">{escape(r.name or "—")}</span></div></div>'
@@ -107,7 +107,7 @@ def ticker_cell(r: TickerRow) -> str:
 
 
 # ---- dashboard sections ----
-def kpi_strip(rows: list[TickerRow]) -> str:
+def kpi_strip(rows: list[TrackedTicker]) -> str:
     ok = [r for r in rows if r.status == "ok" and r.upside is not None]
     pending = sum(r.status == "pending" for r in rows)
     failed = sum(r.status in ("error", "failed") for r in rows)
@@ -143,7 +143,7 @@ def kpi_strip(rows: list[TickerRow]) -> str:
   </section>"""
 
 
-def rank_card(rows: list[TickerRow]) -> str:
+def rank_card(rows: list[TrackedTicker]) -> str:
     d = sorted((r for r in rows if r.upside is not None), key=lambda r: r.upside, reverse=True)
     if not d:
         return ""
@@ -168,7 +168,7 @@ def rank_card(rows: list[TickerRow]) -> str:
     )
 
 
-def dist_card(rows: list[TickerRow]) -> str:
+def dist_card(rows: list[TrackedTicker]) -> str:
     marks = [r.forecast.rating_mark for r in rows if r.forecast and r.forecast.rating_mark is not None]
     if not marks:
         return ""
@@ -281,7 +281,7 @@ def gauge(mark: float | None, counts: list[int] | None = None) -> str:
     )
 
 
-def facts(r: TickerRow) -> str:
+def facts(r: TrackedTicker) -> str:
     f = r.forecast
     secs = None if r.dead else max(0, r.next_fetch - int(time.time()))
     rows = [

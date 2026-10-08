@@ -1,11 +1,13 @@
-import logging
+"""Composition root: builds the object graph and starts the NiceGUI server."""
 
 from nicegui import app, ui
 
-from .config import Settings, settings as default_settings
-from .store import Store
-from .ui.pages import register
-from .updater import Updater
+from livestocks.config import Settings
+from livestocks.config import settings as default_settings
+from livestocks.logging_config import configure_logging
+from livestocks.services import Updater
+from livestocks.storage import Store
+from livestocks.ui import register
 
 
 def create_app(settings: Settings = default_settings) -> None:
@@ -20,20 +22,17 @@ def create_app(settings: Settings = default_settings) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    """Configure logging, build the app and run the server until interrupted."""
+    configure_logging(default_settings.log_level)
     create_app()
     ui.run(
         host=default_settings.host,
         port=default_settings.port,
         title="LiveStocks",
-        favicon="📈",
+        favicon="\U0001F4C8",
         dark=True,
         reload=False,
         show=False,
         storage_secret="livestocks-local",
         show_welcome_message=False,
     )
-
-
-if __name__ in {"__main__", "__mp_main__"}:
-    main()

@@ -2,8 +2,8 @@
 
 from html import escape
 
-from ..models import Extras, Period
-from .chart import COLORS, MONO
+from livestocks.domain import Extras, Period
+from livestocks.ui.chart import COLORS, MONO
 
 _COMPACT_JS = (
     "const c = (v) => { const a = Math.abs(v);"
