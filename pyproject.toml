@@ -23,11 +23,56 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
+    "pyright>=1.1.414",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
     "respx>=0.23.1",
+    "ruff>=0.16.10",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "B", "C4", "SIM", "PT", "RUF", "ASYNC", "PTH", "PERF", "TID", "BLE", "T20", "D"]
+# D205/D400/D415 and D105/D107 contradict the project docstring format (three lines of prose, no sections);
+# scripts/check_docstrings.py enforces that format instead. RUF001-003 flag the typographic symbols the UI uses on purpose.
+ignore = ["D205", "D400", "D415", "D105", "D107", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.isort]
+known-first-party = ["livestocks"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
+"scripts/**" = ["T20"]
+"src/livestocks/ui/theme.py" = ["E501"]
+
+[tool.pyright]
+include = ["src", "scripts"]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "standard"
+strict = [
+    "src/livestocks/domain",
+    "src/livestocks/crawler",
+    "src/livestocks/storage",
+    "src/livestocks/services",
+]
