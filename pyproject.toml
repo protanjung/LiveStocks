@@ -8,11 +8,17 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.20.0",
     "fastapi>=0.142.2",
     "httpx>=0.28.1",
+    "loguru>=0.7.3",
     "nicegui>=3.17.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.1.4",
+    "sqlmodel>=0.0.48",
+    "tenacity>=9.2.1",
     "websockets>=17.2",
 ]
 
@@ -68,6 +74,8 @@ known-first-party = ["livestocks"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["D"]
 "scripts/**" = ["T20"]
+# Alembic revisions are generated code
+"src/livestocks/storage/migrations/**" = ["D", "E501"]
 # the ui package builds HTML, CSS and JavaScript inside string literals that are not worth splitting
 "src/livestocks/ui/**" = ["E501"]
 
@@ -77,10 +85,10 @@ pythonVersion = "3.12"
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "standard"
+ignore = ["src/livestocks/storage/migrations"]
 strict = [
     "src/livestocks/domain",
     "src/livestocks/crawler",
-    "src/livestocks/storage",
     "src/livestocks/services",
     "src/livestocks/api",
 ]

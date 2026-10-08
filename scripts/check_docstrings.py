@@ -67,6 +67,7 @@ def check_file(path: Path) -> list[str]:
 def main(argv: list[str]) -> int:
     """Check the given files, or every .py file under src/ when none are given."""
     files = [Path(a) for a in argv] or sorted(Path("src").rglob("*.py"))
+    files = [f for f in files if "migrations" not in f.parts]  # Alembic revisions are generated
     problems = [p for f in files if f.suffix == ".py" for p in check_file(f)]
     for problem in problems:
         print(problem)

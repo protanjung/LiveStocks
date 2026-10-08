@@ -9,13 +9,11 @@ from livestocks.config import Settings
 from livestocks.crawler import CrawlResult, NotFoundError, UpstreamError
 from livestocks.crawler.quote_stream import parse_quote
 from livestocks.services import ForecastService, Updater
-from livestocks.storage import Store
 
 
 @pytest.fixture
-async def api(make_forecast, quote_data):
+async def api(make_forecast, quote_data, store):
     """A bare FastAPI app with the real router and service; ``plan`` scripts the crawler."""
-    store = Store(":memory:")
     settings = Settings(jitter_max=0, refresh_interval=3600, poll_interval=60, api_wait_seconds=2)
     plan: dict = {"calls": [], "delay": None, "error": None}
 
@@ -37,7 +35,6 @@ async def api(make_forecast, quote_data):
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client, plan, settings
     await updater.stop()
-    store.close()
 
 
 class TestForecastEndpoint:

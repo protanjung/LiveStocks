@@ -49,7 +49,7 @@ class Updater:
         if self._crawler is None:
             self._client = httpx.AsyncClient(timeout=self.settings.request_timeout)
             self._crawler = self._default_crawl
-            self.store.queue_missing_extras()
+            await self.store.queue_missing_extras()
         self._task = asyncio.create_task(self._run(), name="livestocks-updater")
 
     async def stop(self) -> None:
@@ -123,7 +123,7 @@ class Updater:
         Returns at once without waiting for the crawls; use drain() for that.
         Concurrency is limited by Settings.concurrency.
         """
-        for exchange, symbol in self.store.due():
+        for exchange, symbol in await self.store.due():
             key = f"{exchange}:{symbol}"
             if key in self._inflight:
                 continue
@@ -153,24 +153,24 @@ class Updater:
             if s.jitter_max:
                 await asyncio.sleep(random.uniform(0, s.jitter_max))
             result = await self._crawler(exchange, symbol)
-            self.store.record_success(result.forecast, s.refresh_interval)
+            await self.store.record_success(result.forecast, s.refresh_interval)
             if result.prices is not None:
-                self.store.upsert_prices(exchange, symbol, result.prices)
+                await self.store.upsert_prices(exchange, symbol, result.prices)
             if result.extras is not None:
-                self.store.save_extras(exchange, symbol, result.extras)
+                await self.store.save_extras(exchange, symbol, result.extras)
             log.info("updated %s", key)
             return None
         except CrawlError as e:
             log.warning("fetch %s failed: %s", key, e)
             kind = ErrorKind.NOT_FOUND if isinstance(e, NotFoundError) else ErrorKind.UPSTREAM
-            self.store.record_failure(
+            await self.store.record_failure(
                 exchange, symbol, str(e), s.refresh_interval, s.max_failures, kind=kind
             )
             return e
         except Exception as e:
             log.exception("unexpected error fetching %s", key)
             failure = UpstreamError(f"unexpected: {e.__class__.__name__}")
-            self.store.record_failure(
+            await self.store.record_failure(
                 exchange,
                 symbol,
                 str(failure),
@@ -191,10 +191,10 @@ class Updater:
             else:
                 future.set_exception(error)
 
-    def next_sweep_in(self) -> int | None:
+    async def next_sweep_in(self) -> int | None:
         """Return seconds until the next ticker is due, or None when nothing is tracked.
         Zero means something is due now.
         Used by the header status line.
         """
-        nxt = self.store.next_due_at()
+        nxt = await self.store.next_due_at()
         return None if nxt is None else max(0, nxt - int(time.time()))

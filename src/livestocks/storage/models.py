@@ -1,74 +1,81 @@
-"""SQLite schema (DDL) and the shared SQL fragments built on it.
-SCHEMA_V1 is the baseline and SCHEMA_V2 adds the crawl error kind to tickers.
-FORECAST_COLUMNS and TICKER_ROWS_SQL keep the store's queries consistent.
+"""SQLModel table definitions for tickers, forecast snapshots, prices and extras.
+They are the persistence shape only; the rest of the code works with the domain dataclasses.
+mapping.py converts between the two, and the Alembic baseline mirrors these tables.
 """
 
-SCHEMA_V1 = """
-CREATE TABLE IF NOT EXISTS tickers (
-    exchange    TEXT NOT NULL,
-    symbol      TEXT NOT NULL,
-    name        TEXT,
-    added_at    INTEGER NOT NULL,
-    last_fetch  INTEGER,
-    next_fetch  INTEGER NOT NULL DEFAULT 0,
-    last_error  TEXT,
-    fail_count  INTEGER NOT NULL DEFAULT 0,
-    dead        INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (exchange, symbol)
-);
-CREATE TABLE IF NOT EXISTS forecasts (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    exchange      TEXT NOT NULL,
-    symbol        TEXT NOT NULL,
-    fetched_at    INTEGER NOT NULL,
-    name          TEXT,
-    price         REAL,
-    change_pct    REAL,
-    pt_avg        REAL,
-    pt_high       REAL,
-    pt_low        REAL,
-    n_analysts    INTEGER,
-    rating_mark   REAL,
-    n_ratings     INTEGER,
-    ath           REAL,
-    next_earnings INTEGER
-);
-CREATE TABLE IF NOT EXISTS prices (
-    exchange TEXT NOT NULL,
-    symbol   TEXT NOT NULL,
-    ts       INTEGER NOT NULL,
-    close    REAL NOT NULL,
-    PRIMARY KEY (exchange, symbol, ts)
-);
-CREATE TABLE IF NOT EXISTS extras (
-    exchange   TEXT NOT NULL,
-    symbol     TEXT NOT NULL,
-    fetched_at INTEGER NOT NULL,
-    data       TEXT NOT NULL,
-    PRIMARY KEY (exchange, symbol)
-);
-CREATE INDEX IF NOT EXISTS forecasts_ticker_time ON forecasts (exchange, symbol, fetched_at);
-"""
+from sqlalchemy import Index
+from sqlmodel import Field, SQLModel
 
-SCHEMA_V2 = """
-ALTER TABLE tickers ADD COLUMN error_kind TEXT;
-"""
 
-FORECAST_COLUMNS = (
-    "name, price, change_pct, pt_avg, pt_high, pt_low, n_analysts, "
-    "rating_mark, n_ratings, ath, next_earnings"
-)
+class TickerTable(SQLModel, table=True):
+    """A tracked ticker with its crawl schedule and failure state.
+    The primary key is the exchange and symbol pair.
+    next_fetch, fail_count and dead drive the updater's schedule.
+    """
 
-# Every tracked ticker joined to its latest forecast snapshot (if any).
-TICKER_ROWS_SQL = """
-SELECT t.exchange, t.symbol, t.name AS tname, t.added_at, t.last_fetch, t.next_fetch,
-       t.last_error, t.error_kind, t.fail_count, t.dead, f.fetched_at, f.name, f.price,
-       f.change_pct,
-       f.pt_avg, f.pt_high, f.pt_low, f.n_analysts, f.rating_mark, f.n_ratings, f.ath,
-       f.next_earnings
-FROM tickers t
-LEFT JOIN forecasts f ON f.id = (
-    SELECT id FROM forecasts WHERE exchange = t.exchange AND symbol = t.symbol
-    ORDER BY fetched_at DESC, id DESC LIMIT 1
-)
-"""
+    __tablename__ = "tickers"  # pyright: ignore[reportAssignmentType]
+
+    exchange: str = Field(primary_key=True)
+    symbol: str = Field(primary_key=True)
+    name: str | None = None
+    added_at: int
+    last_fetch: int | None = None
+    next_fetch: int = 0
+    last_error: str | None = None
+    error_kind: str | None = None
+    fail_count: int = 0
+    dead: bool = False
+
+
+class ForecastTable(SQLModel, table=True):
+    """One forecast snapshot per crawl, kept as history.
+    The row with the highest id of a ticker is its current forecast.
+    Values are None when TradingView did not publish them.
+    """
+
+    __tablename__ = "forecasts"  # pyright: ignore[reportAssignmentType]
+    __table_args__ = (Index("forecasts_ticker_time", "exchange", "symbol", "fetched_at"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    exchange: str
+    symbol: str
+    fetched_at: int
+    name: str | None = None
+    price: float | None = None
+    change_pct: float | None = None
+    pt_avg: float | None = None
+    pt_high: float | None = None
+    pt_low: float | None = None
+    n_analysts: int | None = None
+    rating_mark: float | None = None
+    n_ratings: int | None = None
+    ath: float | None = None
+    next_earnings: int | None = None
+
+
+class PriceTable(SQLModel, table=True):
+    """One daily close of a ticker, unique per timestamp.
+    Re-crawling the same window replaces rows instead of duplicating them.
+    ts is a unix timestamp in seconds.
+    """
+
+    __tablename__ = "prices"  # pyright: ignore[reportAssignmentType]
+
+    exchange: str = Field(primary_key=True)
+    symbol: str = Field(primary_key=True)
+    ts: int = Field(primary_key=True)
+    close: float
+
+
+class ExtrasTable(SQLModel, table=True):
+    """The latest EPS, revenue and rating-count extras of a ticker, as JSON text.
+    Only the most recent set is kept for each ticker.
+    fetched_at says when it was crawled.
+    """
+
+    __tablename__ = "extras"  # pyright: ignore[reportAssignmentType]
+
+    exchange: str = Field(primary_key=True)
+    symbol: str = Field(primary_key=True)
+    fetched_at: int
+    data: str

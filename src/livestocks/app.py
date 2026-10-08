@@ -35,9 +35,16 @@ def create_app(settings: Settings = default_settings) -> None:
     updater = Updater(store, settings)
     service = ForecastService(store, updater, settings)
 
-    app.on_startup(updater.start)
-    app.on_shutdown(updater.stop)
-    app.on_shutdown(store.close)
+    async def startup() -> None:
+        await store.initialize()
+        await updater.start()
+
+    async def shutdown() -> None:
+        await updater.stop()
+        await store.close()
+
+    app.on_startup(startup)
+    app.on_shutdown(shutdown)
     register(service, settings)
     app.include_router(build_router(service), prefix="/api/v1")
     register_error_handlers(app)

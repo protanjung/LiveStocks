@@ -52,3 +52,14 @@ def make_ticker(make_forecast) -> Callable[..., TrackedTicker]:
         return TrackedTicker("IDX", symbol, None, 0, 1, 0, None, 0, False, forecast, 1)
 
     return factory
+
+
+@pytest.fixture
+async def store(tmp_path):
+    """An initialised Store on a temporary file, closed after the test."""
+    from livestocks.storage import Store
+
+    s = Store(tmp_path / "store.db", migrate=False)
+    await s.initialize()
+    yield s
+    await s.close()

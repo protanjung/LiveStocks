@@ -4,6 +4,7 @@ Rendering is delegated to the pure builders in components, chart and financials.
 """
 
 import time
+from collections.abc import Awaitable, Callable
 from functools import partial
 from html import escape
 from typing import Any
@@ -57,16 +58,16 @@ def register(service: ForecastService, settings: Settings) -> None:
         return f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
 
     # ---- shared shell ----
-    def shell(state: PageState, on_theme) -> None:
+    async def shell(state: PageState, on_theme: Callable[[], Awaitable[None]]) -> None:
         ui.add_head_html(FONTS_HEAD)
         ui.add_css(CSS)
         dark = ui.dark_mode(state.dark)
 
-        def toggle() -> None:
+        async def toggle() -> None:
             state.dark = not state.dark
             app.storage.user["dark"] = state.dark
             dark.value = state.dark
-            on_theme()
+            await on_theme()
 
         async def add(e=None) -> None:
             # Read the box in the browser: the server-side value can lag a fast type-then-click.
@@ -74,7 +75,7 @@ def register(service: ForecastService, settings: Settings) -> None:
             if not raw.strip():
                 return
             try:
-                result = service.track(raw)
+                result = await service.track(raw)
             except HANDLED as err:
                 ui.notify(describe(err), type="negative")
                 return
@@ -122,13 +123,13 @@ def register(service: ForecastService, settings: Settings) -> None:
                     sanitize=False,
                 )
 
-        def tick() -> None:
+        async def tick() -> None:
             busy = len(service.fetching())
             dot.classes(add="busy" if busy else "", remove="" if busy else "busy")
             if busy:
                 status.text = f"Fetching {busy} ticker{'s' if busy > 1 else ''}…"
             else:
-                nxt = service.seconds_until_next_refresh()
+                nxt = await service.seconds_until_next_refresh()
                 status.text = "Crawler idle" + (
                     " · no tickers"
                     if nxt is None
@@ -137,7 +138,7 @@ def register(service: ForecastService, settings: Settings) -> None:
                     else f" · next refresh in {c.duration(nxt)}"
                 )
 
-        tick()
+        await tick()
         ui.timer(2.0, tick)
 
     def new_state() -> PageState:
@@ -145,11 +146,11 @@ def register(service: ForecastService, settings: Settings) -> None:
 
     # ---- dashboard ----
     @ui.page("/")
-    def index() -> None:
+    async def index() -> None:
         state = new_state()
 
-        def sig() -> tuple:
-            rows = service.list_tickers()
+        async def sig() -> tuple[Any, ...]:
+            rows = await service.list_tickers()
             return (
                 tuple((r.key, r.status, r.fetched_at, r.last_error, r.fail_count) for r in rows),
                 tuple(sorted(service.fetching())),
@@ -162,9 +163,9 @@ def register(service: ForecastService, settings: Settings) -> None:
         last: dict[str, Any] = {"sig": None}
 
         @ui.refreshable
-        def body() -> None:
-            rows = service.list_tickers()
-            last["sig"] = sig()
+        async def body() -> None:
+            rows = await service.list_tickers()
+            last["sig"] = await sig()
             with T("div").classes("page-title"):
                 T("h1").text = "Forecast dashboard"
                 T("span").classes("sub").text = "Analyst price targets vs. current price"
@@ -177,12 +178,12 @@ def register(service: ForecastService, settings: Settings) -> None:
                 ui.html(c.rank_card(rows), sanitize=False)
                 ui.html(c.dist_card(rows), sanitize=False)
 
-        def sort_by(key: str) -> None:
+        async def sort_by(key: str) -> None:
             if state.sort_key == key:
                 state.sort_dir = -state.sort_dir
             else:
                 state.sort_key, state.sort_dir = key, (1 if key == "ticker" else -1)
-            body.refresh()
+            await body.refresh()
 
         def sorted_rows(rows: list[TrackedTicker]) -> list[TrackedTicker]:
             keys = {
@@ -198,14 +199,14 @@ def register(service: ForecastService, settings: Settings) -> None:
             rest = [r for r in rows if not r.forecast]
             return sorted(ok, key=keys[state.sort_key], reverse=state.sort_dir < 0) + rest
 
-        def remove(r: TrackedTicker) -> None:
-            service.remove(r.id)
+        async def remove(r: TrackedTicker) -> None:
+            await service.remove(r.id)
             ui.notify(f"Removed {r.key}")
-            body.refresh()
+            await body.refresh()
 
-        def retry(r: TrackedTicker) -> None:
-            service.retry(r.id)
-            body.refresh()
+        async def retry(r: TrackedTicker) -> None:
+            await service.retry(r.id)
+            await body.refresh()
 
         def table(rows: list[TrackedTicker]) -> None:
             def th(label: str, key: str | None = None, right: bool = False) -> None:
@@ -293,23 +294,23 @@ def register(service: ForecastService, settings: Settings) -> None:
                         f'aria-label="Remove {r.symbol}" title="Remove"'
                     ).on("click.stop", partial(remove, r)).text = "✕"
 
-        def theme_changed() -> None:
-            body.refresh()
+        async def theme_changed() -> None:
+            await body.refresh()
 
-        shell(state, theme_changed)
+        await shell(state, theme_changed)
         with T("div").classes("wrap"), T("main"):
-            body()
+            await body()
         footer()
 
-        def maybe_refresh() -> None:
-            if sig() != last["sig"]:
-                body.refresh()
+        async def maybe_refresh() -> None:
+            if await sig() != last["sig"]:
+                await body.refresh()
 
         ui.timer(3.0, maybe_refresh)
 
     # ---- detail ----
     @ui.page("/t/{exchange}/{symbol}")
-    def detail(exchange: str, symbol: str) -> None:
+    async def detail(exchange: str, symbol: str) -> None:
         tid = TickerId(exchange.upper(), symbol.upper())
         state = new_state()
         last: dict[str, Any] = {"sig": None}
@@ -318,8 +319,8 @@ def register(service: ForecastService, settings: Settings) -> None:
             return view.signature if view else None
 
         @ui.refreshable
-        def body() -> None:
-            view = service.get_ticker(tid)
+        async def body() -> None:
+            view = await service.get_ticker(tid)
             last["sig"] = sig_of(view)
             r = view.ticker if view else None
             extras = view.extras if view else None
@@ -391,7 +392,7 @@ def register(service: ForecastService, settings: Settings) -> None:
                                 b.props(f'aria-pressed="{str(state.range == k).lower()}"').text = k
                     with T("div").classes("card-body chartbody"):
                         since = int(time.time()) - RANGES[state.range] if RANGES[state.range] else 0
-                        bars = service.price_history(tid, since)
+                        bars = await service.price_history(tid, since)
                         ui.echart(
                             forecast_options(bars, f, state.dark, int(time.time() * 1000))
                         ).style("height:100%;min-height:380px;width:100%")
@@ -423,13 +424,13 @@ def register(service: ForecastService, settings: Settings) -> None:
                     fin_card("EPS", "eps", "eps_period", extras.eps_fy, extras.eps_fq)
                     fin_card("Revenue", "rev", "rev_period", extras.rev_fy, extras.rev_fq)
 
-        def set_range(k: str) -> None:
+        async def set_range(k: str) -> None:
             state.range = k
-            body.refresh()
+            await body.refresh()
 
-        def set_period(attr: str, k: str) -> None:
+        async def set_period(attr: str, k: str) -> None:
             setattr(state, attr, k)
-            body.refresh()
+            await body.refresh()
 
         def fin_card(title: str, kind: str, attr: str, annual, quarterly) -> None:
             with T("div").classes("card"):
@@ -451,14 +452,14 @@ def register(service: ForecastService, settings: Settings) -> None:
                     )
                     ui.html(fin_table(periods, kind), sanitize=False)
 
-        shell(state, body.refresh)
+        await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            body()
+            await body()
         footer()
 
-        def maybe_refresh() -> None:
-            if sig_of(service.get_ticker(tid)) != last["sig"]:
-                body.refresh()
+        async def maybe_refresh() -> None:
+            if sig_of(await service.get_ticker(tid)) != last["sig"]:
+                await body.refresh()
 
         ui.timer(3.0, maybe_refresh)
 

@@ -1,305 +1,320 @@
-"""SQLite persistence: tracked tickers, crawl status and forecast snapshots.
-Operations are tiny and local, so they run synchronously under a lock.
-Every method opens its own transaction and is safe to call from any thread.
+"""Async SQLite persistence: tracked tickers, crawl status and forecast snapshots.
+Each method runs in its own short transaction on an SQLAlchemy async session.
+Rows are mapped to the domain dataclasses so callers never see ORM objects.
 """
 
-import json
-import sqlite3
-import threading
+import asyncio
 import time
 from collections.abc import Sequence
-from dataclasses import asdict
 from pathlib import Path
+from typing import Any, cast
 
-from livestocks.domain import ErrorKind, Extras, Forecast, Period, PriceBar, TrackedTicker
-from livestocks.storage.migrations import migrate
-from livestocks.storage.models import FORECAST_COLUMNS, TICKER_ROWS_SQL
+from sqlalchemy import CursorResult, and_, delete, func, update
+from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
+from sqlmodel import SQLModel, col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-_FORECAST_COLS = FORECAST_COLUMNS
-_ROWS_SQL = TICKER_ROWS_SQL
-
-
-def _forecast(row: sqlite3.Row) -> Forecast:
-    return Forecast(
-        exchange=row["exchange"],
-        symbol=row["symbol"],
-        name=row["name"],
-        price=row["price"],
-        change_pct=row["change_pct"],
-        pt_avg=row["pt_avg"],
-        pt_high=row["pt_high"],
-        pt_low=row["pt_low"],
-        n_analysts=row["n_analysts"],
-        rating_mark=row["rating_mark"],
-        n_ratings=row["n_ratings"],
-        ath=row["ath"],
-        next_earnings=row["next_earnings"],
-    )
+from livestocks.domain import ErrorKind, Extras, Forecast, PriceBar, TrackedTicker
+from livestocks.storage.db import create_engine, upgrade_database
+from livestocks.storage.mapping import (
+    extras_from_json,
+    extras_to_json,
+    forecast_from_row,
+    forecast_to_row,
+    tracked_from_rows,
+)
+from livestocks.storage.models import ExtrasTable, ForecastTable, PriceTable, TickerTable
 
 
-def _ticker_row(row: sqlite3.Row) -> TrackedTicker:
-    return TrackedTicker(
-        exchange=row["exchange"],
-        symbol=row["symbol"],
-        name=row["name"] or row["tname"],
-        added_at=row["added_at"],
-        last_fetch=row["last_fetch"],
-        next_fetch=row["next_fetch"],
-        last_error=row["last_error"],
-        fail_count=row["fail_count"],
-        dead=bool(row["dead"]),
-        forecast=_forecast(row) if row["fetched_at"] is not None else None,
-        fetched_at=row["fetched_at"],
-        error_kind=ErrorKind(row["error_kind"]) if row["error_kind"] else None,
-    )
+def _now(now: int | None) -> int:
+    return now or int(time.time())
 
 
 class Store:
-    """Thread-safe SQLite store for tickers, forecasts, price history and extras.
-    Pass ':memory:' for a throwaway database in tests.
-    Opening it creates the file and applies any pending schema migrations.
+    """Async SQLite store for tickers, forecasts, price history and extras.
+    Call initialize() once before use and close() when finished.
+    Tests pass migrate=False to build the schema straight from the models.
     """
 
-    def __init__(self, path: Path | str):
-        if str(path) != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(path), check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock:
-            self._db.execute("PRAGMA journal_mode=WAL")
-            migrate(self._db)
+    def __init__(self, path: Path | str, *, migrate: bool = True):
+        """Create the engine for a database file; nothing is opened until initialize()."""
+        self._path = path
+        self._migrate = migrate
+        self._engine: AsyncEngine = create_engine(path)
+        self._sessions = async_sessionmaker(
+            self._engine, class_=AsyncSession, expire_on_commit=False
+        )
 
-    def close(self) -> None:
-        """Close the database connection.
+    async def initialize(self) -> None:
+        """Create or upgrade the schema so the store is ready for use.
+        By default the Alembic migrations run in a worker thread.
+        With migrate=False the tables are created straight from the models instead.
+        """
+        if self._migrate:
+            await asyncio.to_thread(upgrade_database, self._path)
+        else:
+            async with self._engine.begin() as connection:
+                await connection.run_sync(SQLModel.metadata.create_all)
+
+    async def close(self) -> None:
+        """Release every pooled connection.
         No method may be called afterwards.
         Registered as a NiceGUI shutdown hook.
         """
-        with self._lock:
-            self._db.close()
+        await self._engine.dispose()
 
     # ---- tracked tickers ----
-    def add_ticker(self, exchange: str, symbol: str, now: int | None = None) -> bool:
+    async def add_ticker(self, exchange: str, symbol: str, now: int | None = None) -> bool:
         """Start tracking a ticker; returns False if it was already tracked.
         New tickers are due immediately, so the updater crawls them on its next sweep.
         now overrides the creation time and exists for tests.
         """
-        with self._lock, self._db:
-            cur = self._db.execute(
-                "INSERT OR IGNORE INTO tickers (exchange, symbol, added_at) VALUES (?, ?, ?)",
-                (exchange, symbol, now or int(time.time())),
-            )
-            return cur.rowcount == 1
+        statement = (
+            insert(TickerTable)
+            .values(exchange=exchange, symbol=symbol, added_at=_now(now))
+            .on_conflict_do_nothing()
+        )
+        async with self._sessions.begin() as session:
+            result = await session.exec(statement)
+            return cast("CursorResult[Any]", result).rowcount == 1
 
-    def remove_ticker(self, exchange: str, symbol: str) -> None:
+    async def remove_ticker(self, exchange: str, symbol: str) -> None:
         """Stop tracking a ticker and delete its snapshots, prices and extras.
         Does nothing if the ticker is not tracked.
         A crawl already in flight finds the row gone and drops its result.
         """
-        with self._lock, self._db:
-            self._db.execute(
-                "DELETE FROM tickers WHERE exchange = ? AND symbol = ?", (exchange, symbol)
-            )
-            self._db.execute(
-                "DELETE FROM forecasts WHERE exchange = ? AND symbol = ?", (exchange, symbol)
-            )
-            self._db.execute(
-                "DELETE FROM prices WHERE exchange = ? AND symbol = ?", (exchange, symbol)
-            )
-            self._db.execute(
-                "DELETE FROM extras WHERE exchange = ? AND symbol = ?", (exchange, symbol)
-            )
+        async with self._sessions.begin() as session:
+            for table in (TickerTable, ForecastTable, PriceTable, ExtrasTable):
+                await session.exec(
+                    delete(table).where(
+                        col(table.exchange) == exchange, col(table.symbol) == symbol
+                    )
+                )
 
-    def retry(self, exchange: str, symbol: str) -> None:
+    async def retry(self, exchange: str, symbol: str) -> None:
         """Clear a ticker's failure state so the updater picks it up on its next sweep.
-        Resets the fail counter, the dead flag and the last error.
+        Resets the fail counter, the dead flag, the last error and its kind.
         Used by the retry button and when a failed ticker is added again.
         """
-        with self._lock, self._db:
-            self._db.execute(
-                "UPDATE tickers SET next_fetch = 0, fail_count = 0, dead = 0, last_error = NULL, "
-                "error_kind = NULL "
-                "WHERE exchange = ? AND symbol = ?",
-                (exchange, symbol),
+        async with self._sessions.begin() as session:
+            await session.exec(
+                update(TickerTable)
+                .where(col(TickerTable.exchange) == exchange, col(TickerTable.symbol) == symbol)
+                .values(next_fetch=0, fail_count=0, dead=False, last_error=None, error_kind=None)
             )
 
-    def retry_all(self) -> None:
+    async def retry_all(self) -> None:
         """Make every live ticker due now.
         Dead tickers stay dead until retry() is called for them.
         Lets the UI offer a refresh-everything action.
         """
-        with self._lock, self._db:
-            self._db.execute("UPDATE tickers SET next_fetch = 0 WHERE dead = 0")
+        async with self._sessions.begin() as session:
+            await session.exec(
+                update(TickerTable).where(col(TickerTable.dead).is_(False)).values(next_fetch=0)
+            )
 
     # ---- reads ----
-    def rows(self) -> list[TrackedTicker]:
+    def _tickers_with_latest_forecast(self):
+        newest = (
+            select(
+                col(ForecastTable.exchange),
+                col(ForecastTable.symbol),
+                func.max(col(ForecastTable.id)).label("newest_id"),
+            )
+            .group_by(col(ForecastTable.exchange), col(ForecastTable.symbol))
+            .subquery()
+        )
+        return (
+            select(TickerTable, ForecastTable)
+            .outerjoin(
+                newest,
+                and_(
+                    col(TickerTable.exchange) == newest.c.exchange,
+                    col(TickerTable.symbol) == newest.c.symbol,
+                ),
+            )
+            .outerjoin(ForecastTable, col(ForecastTable.id) == newest.c.newest_id)
+        )
+
+    async def rows(self) -> list[TrackedTicker]:
         """Return every tracked ticker with its latest forecast, oldest first.
         Tickers without a forecast have forecast set to None.
         The status property tells pending, error and failed apart.
         """
-        with self._lock:
-            return [
-                _ticker_row(r)
-                for r in self._db.execute(_ROWS_SQL + " ORDER BY t.added_at, t.symbol")
-            ]
+        statement = self._tickers_with_latest_forecast().order_by(
+            col(TickerTable.added_at), col(TickerTable.symbol)
+        )
+        async with self._sessions() as session:
+            result = await session.exec(statement)
+            return [tracked_from_rows(ticker, latest) for ticker, latest in result.all()]
 
-    def row(self, exchange: str, symbol: str) -> TrackedTicker | None:
+    async def row(self, exchange: str, symbol: str) -> TrackedTicker | None:
         """Return one tracked ticker with its latest forecast, or None if untracked.
         Same shape as the items returned by rows().
         Cheap enough to call on every page refresh.
         """
-        with self._lock:
-            r = self._db.execute(
-                _ROWS_SQL + " WHERE t.exchange = ? AND t.symbol = ?", (exchange, symbol)
-            ).fetchone()
-        return _ticker_row(r) if r else None
+        statement = self._tickers_with_latest_forecast().where(
+            col(TickerTable.exchange) == exchange, col(TickerTable.symbol) == symbol
+        )
+        async with self._sessions() as session:
+            found = (await session.exec(statement)).first()
+        return tracked_from_rows(*found) if found else None
 
-    def history(self, exchange: str, symbol: str, since: int = 0) -> list[tuple[int, Forecast]]:
+    async def history(
+        self, exchange: str, symbol: str, since: int = 0
+    ) -> list[tuple[int, Forecast]]:
         """Return every forecast snapshot since a timestamp as (fetched_at, Forecast).
         Ordered oldest first; since is unix seconds and 0 means all.
         Used as a price fallback when no price history exists for an exchange.
         """
-        with self._lock:
-            cur = self._db.execute(
-                f"SELECT exchange, symbol, fetched_at, {_FORECAST_COLS} FROM forecasts "
-                "WHERE exchange = ? AND symbol = ? AND fetched_at >= ? ORDER BY fetched_at, id",
-                (exchange, symbol, since),
+        statement = (
+            select(ForecastTable)
+            .where(
+                col(ForecastTable.exchange) == exchange,
+                col(ForecastTable.symbol) == symbol,
+                col(ForecastTable.fetched_at) >= since,
             )
-            return [(r["fetched_at"], _forecast(r)) for r in cur]
+            .order_by(col(ForecastTable.fetched_at), col(ForecastTable.id))
+        )
+        async with self._sessions() as session:
+            rows = (await session.exec(statement)).all()
+        return [(row.fetched_at, forecast_from_row(row)) for row in rows]
 
-    def prices(self, exchange: str, symbol: str, since: int = 0) -> list[PriceBar]:
+    async def prices(self, exchange: str, symbol: str, since: int = 0) -> list[PriceBar]:
         """Return stored daily closes since a timestamp, oldest first.
         since is unix seconds; 0 returns the whole history.
         Bars come from the price-history crawl, not from forecast snapshots.
         """
-        with self._lock:
-            cur = self._db.execute(
-                "SELECT ts, close FROM prices "
-                "WHERE exchange = ? AND symbol = ? AND ts >= ? ORDER BY ts",
-                (exchange, symbol, since),
+        statement = (
+            select(PriceTable)
+            .where(
+                col(PriceTable.exchange) == exchange,
+                col(PriceTable.symbol) == symbol,
+                col(PriceTable.ts) >= since,
             )
-            return [PriceBar(r["ts"], r["close"]) for r in cur]
+            .order_by(col(PriceTable.ts))
+        )
+        async with self._sessions() as session:
+            rows = (await session.exec(statement)).all()
+        return [PriceBar(row.ts, row.close) for row in rows]
 
-    def upsert_prices(self, exchange: str, symbol: str, bars: Sequence[PriceBar]) -> None:
+    async def upsert_prices(self, exchange: str, symbol: str, bars: Sequence[PriceBar]) -> None:
         """Insert price bars, replacing any stored bar with the same timestamp.
         Re-crawling the same two-year window is therefore idempotent.
         An empty sequence is allowed and does nothing.
         """
-        with self._lock, self._db:
-            self._db.executemany(
-                "INSERT OR REPLACE INTO prices (exchange, symbol, ts, close) VALUES (?, ?, ?, ?)",
-                [(exchange, symbol, b.ts, b.close) for b in bars],
-            )
+        if not bars:
+            return
+        statement = insert(PriceTable).values(
+            [{"exchange": exchange, "symbol": symbol, "ts": b.ts, "close": b.close} for b in bars]
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=["exchange", "symbol", "ts"], set_={"close": statement.excluded.close}
+        )
+        async with self._sessions.begin() as session:
+            await session.exec(statement)
 
-    def save_extras(
+    async def save_extras(
         self, exchange: str, symbol: str, extras: Extras, now: int | None = None
     ) -> None:
         """Store the latest EPS, revenue and rating-count extras for a ticker.
         Replaces any previous extras; only the most recent set is kept.
         now overrides the stored timestamp and exists for tests.
         """
-        with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR REPLACE INTO extras (exchange, symbol, fetched_at, data) "
-                "VALUES (?, ?, ?, ?)",
-                (exchange, symbol, now or int(time.time()), json.dumps(asdict(extras))),
-            )
+        statement = insert(ExtrasTable).values(
+            exchange=exchange,
+            symbol=symbol,
+            fetched_at=_now(now),
+            data=extras_to_json(extras),
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=["exchange", "symbol"],
+            set_={"fetched_at": statement.excluded.fetched_at, "data": statement.excluded.data},
+        )
+        async with self._sessions.begin() as session:
+            await session.exec(statement)
 
-    def extras(self, exchange: str, symbol: str) -> tuple[int, Extras] | None:
+    async def extras(self, exchange: str, symbol: str) -> tuple[int, Extras] | None:
         """Return (fetched_at, Extras) for a ticker, or None if never fetched.
         Extras are stored as JSON and rebuilt into dataclasses on the way out.
         The detail page uses them for the gauge counts and the EPS and revenue charts.
         """
-        with self._lock:
-            r = self._db.execute(
-                "SELECT fetched_at, data FROM extras WHERE exchange = ? AND symbol = ?",
-                (exchange, symbol),
-            ).fetchone()
-        if r is None:
-            return None
-        d = json.loads(r["data"])
-        for k in ("eps_fy", "eps_fq", "rev_fy", "rev_fq"):
-            d[k] = tuple(Period(**p) for p in d[k])
-        return r["fetched_at"], Extras(**d)
+        async with self._sessions() as session:
+            row = await session.get(ExtrasTable, (exchange, symbol))
+        return (row.fetched_at, extras_from_json(row.data)) if row else None
 
-    def queue_missing_extras(self) -> None:
+    async def queue_missing_extras(self) -> None:
         """Make tickers that were crawled before extras existed due immediately.
         A one-off backfill so older databases gain EPS and revenue data.
         Dead tickers and never-crawled tickers are left alone.
         """
-        with self._lock, self._db:
-            self._db.execute(
-                "UPDATE tickers SET next_fetch = 0 "
-                "WHERE dead = 0 AND last_fetch IS NOT NULL AND NOT EXISTS ("
-                "SELECT 1 FROM extras e "
-                "WHERE e.exchange = tickers.exchange AND e.symbol = tickers.symbol)"
+        has_extras = (
+            select(col(ExtrasTable.symbol))
+            .where(
+                col(ExtrasTable.exchange) == col(TickerTable.exchange),
+                col(ExtrasTable.symbol) == col(TickerTable.symbol),
+            )
+            .exists()
+        )
+        async with self._sessions.begin() as session:
+            await session.exec(
+                update(TickerTable)
+                .where(
+                    col(TickerTable.dead).is_(False),
+                    col(TickerTable.last_fetch).is_not(None),
+                    ~has_extras,
+                )
+                .values(next_fetch=0)
             )
 
-    def due(self, now: int | None = None) -> list[tuple[str, str]]:
+    async def due(self, now: int | None = None) -> list[tuple[str, str]]:
         """Return (exchange, symbol) of live tickers whose next fetch time has passed.
         Ordered by how long they have waited; now overrides the clock for tests.
         Dead tickers are never returned.
         """
-        with self._lock:
-            cur = self._db.execute(
-                "SELECT exchange, symbol FROM tickers "
-                "WHERE dead = 0 AND next_fetch <= ? ORDER BY next_fetch",
-                (now or int(time.time()),),
-            )
-            return [(r["exchange"], r["symbol"]) for r in cur]
+        statement = (
+            select(col(TickerTable.exchange), col(TickerTable.symbol))
+            .where(col(TickerTable.dead).is_(False), col(TickerTable.next_fetch) <= _now(now))
+            .order_by(col(TickerTable.next_fetch))
+        )
+        async with self._sessions() as session:
+            result = await session.exec(statement)
+            return [(exchange, symbol) for exchange, symbol in result.all()]
 
-    def next_due_at(self) -> int | None:
+    async def next_due_at(self) -> int | None:
         """Return the earliest next_fetch of any live ticker, or None.
         A value in the past means something is due now.
         The updater uses it to show a countdown.
         """
-        with self._lock:
-            r = self._db.execute(
-                "SELECT MIN(next_fetch) AS n FROM tickers WHERE dead = 0"
-            ).fetchone()
-        return r["n"]
+        statement = select(func.min(col(TickerTable.next_fetch))).where(
+            col(TickerTable.dead).is_(False)
+        )
+        async with self._sessions() as session:
+            return (await session.exec(statement)).one()
 
     # ---- crawl results ----
-    def record_success(self, f: Forecast, interval: int, now: int | None = None) -> None:
+    async def record_success(self, f: Forecast, interval: int, now: int | None = None) -> None:
         """Store a forecast snapshot and schedule the next refresh after interval seconds.
         Clears the ticker's failure counters and updates its display name.
         Ignored if the ticker was removed while its crawl was running; now overrides the clock.
         """
-        now = now or int(time.time())
-        with self._lock, self._db:
-            tracked = self._db.execute(
-                "SELECT 1 FROM tickers WHERE exchange = ? AND symbol = ?", (f.exchange, f.symbol)
-            ).fetchone()
-            if tracked is None:  # removed while fetching
+        stamp = _now(now)
+        async with self._sessions.begin() as session:
+            ticker = await session.get(TickerTable, (f.exchange, f.symbol))
+            if ticker is None:  # removed while fetching
                 return
-            self._db.execute(
-                f"INSERT INTO forecasts (exchange, symbol, fetched_at, {_FORECAST_COLS}) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    f.exchange,
-                    f.symbol,
-                    now,
-                    f.name,
-                    f.price,
-                    f.change_pct,
-                    f.pt_avg,
-                    f.pt_high,
-                    f.pt_low,
-                    f.n_analysts,
-                    f.rating_mark,
-                    f.n_ratings,
-                    f.ath,
-                    f.next_earnings,
-                ),
-            )
-            self._db.execute(
-                "UPDATE tickers SET name = COALESCE(?, name), last_fetch = ?, next_fetch = ?, "
-                "last_error = NULL, error_kind = NULL, fail_count = 0, dead = 0 "
-                "WHERE exchange = ? AND symbol = ?",
-                (f.name, now, now + interval, f.exchange, f.symbol),
-            )
+            session.add(forecast_to_row(f, stamp))
+            ticker.name = f.name or ticker.name
+            ticker.last_fetch = stamp
+            ticker.next_fetch = stamp + interval
+            ticker.last_error = None
+            ticker.error_kind = None
+            ticker.fail_count = 0
+            ticker.dead = False
+            session.add(ticker)
 
-    def record_failure(
+    async def record_failure(
         self,
         exchange: str,
         symbol: str,
@@ -313,26 +328,15 @@ class Store:
         After max_failures failures in a row the ticker is marked dead; kind records why it failed.
         Ignored if the ticker was removed while its crawl was running.
         """
-        now = now or int(time.time())
-        with self._lock, self._db:
-            r = self._db.execute(
-                "SELECT fail_count FROM tickers WHERE exchange = ? AND symbol = ?",
-                (exchange, symbol),
-            ).fetchone()
-            if r is None:  # removed while fetching
+        stamp = _now(now)
+        async with self._sessions.begin() as session:
+            ticker = await session.get(TickerTable, (exchange, symbol))
+            if ticker is None:  # removed while fetching
                 return
-            fails = r["fail_count"] + 1
-            backoff = min(interval, 60 * 2**fails)
-            self._db.execute(
-                "UPDATE tickers SET fail_count = ?, last_error = ?, error_kind = ?, "
-                "next_fetch = ?, dead = ? WHERE exchange = ? AND symbol = ?",
-                (
-                    fails,
-                    error,
-                    kind.value if kind else None,
-                    now + backoff,
-                    int(fails >= max_failures),
-                    exchange,
-                    symbol,
-                ),
-            )
+            fails = ticker.fail_count + 1
+            ticker.fail_count = fails
+            ticker.last_error = error
+            ticker.error_kind = kind.value if kind else None
+            ticker.next_fetch = stamp + min(interval, 60 * 2**fails)
+            ticker.dead = fails >= max_failures
+            session.add(ticker)

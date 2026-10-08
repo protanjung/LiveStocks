@@ -12,16 +12,8 @@ from livestocks.services import (
     Updater,
     UpstreamUnavailableError,
 )
-from livestocks.storage import Store
 
 TLKM = TickerId("IDX", "TLKM")
-
-
-@pytest.fixture
-def store():
-    s = Store(":memory:")
-    yield s
-    s.close()
 
 
 @pytest.fixture
@@ -35,47 +27,47 @@ def service(store):
 
 
 class TestTrack:
-    def test_new_ticker_is_stored_pending_and_reported_as_created(self, service):
-        result = service.track("tlkm")
+    async def test_new_ticker_is_stored_pending_and_reported_as_created(self, service):
+        result = await service.track("tlkm")
 
         assert result.ticker == TLKM
         assert result.created is True
-        assert [t.status for t in service.list_tickers()] == [TickerStatus.PENDING]
+        assert [t.status for t in await service.list_tickers()] == [TickerStatus.PENDING]
 
-    def test_default_exchange_applies_to_bare_symbols_only(self, service):
-        service.track("nasdaq:aapl")
-        service.track("bbca")
+    async def test_default_exchange_applies_to_bare_symbols_only(self, service):
+        await service.track("nasdaq:aapl")
+        await service.track("bbca")
 
-        assert {t.key for t in service.list_tickers()} == {"NASDAQ:AAPL", "IDX:BBCA"}
+        assert {t.key for t in await service.list_tickers()} == {"NASDAQ:AAPL", "IDX:BBCA"}
 
-    def test_tracking_an_existing_ticker_retries_it_instead(self, service, store):
-        service.track("tlkm")
+    async def test_tracking_an_existing_ticker_retries_it_instead(self, service, store):
+        await service.track("tlkm")
         for _ in range(5):
-            store.record_failure("IDX", "TLKM", "boom", 3600, 5)
-        assert service.list_tickers()[0].status is TickerStatus.FAILED
+            await store.record_failure("IDX", "TLKM", "boom", 3600, 5)
+        assert (await service.list_tickers())[0].status is TickerStatus.FAILED
 
-        result = service.track("tlkm")
+        result = await service.track("tlkm")
 
         assert result.created is False
-        assert service.list_tickers()[0].status is TickerStatus.PENDING
+        assert (await service.list_tickers())[0].status is TickerStatus.PENDING
 
-    def test_malformed_text_raises_invalid_ticker_error(self, service):
+    async def test_malformed_text_raises_invalid_ticker_error(self, service):
         with pytest.raises(InvalidTickerError):
-            service.track("a b")
-        assert service.list_tickers() == []
+            await service.track("a b")
+        assert await service.list_tickers() == []
 
 
 class TestRead:
-    def test_get_ticker_is_none_when_not_tracked(self, service):
-        assert service.get_ticker(TLKM) is None
+    async def test_get_ticker_is_none_when_not_tracked(self, service):
+        assert await service.get_ticker(TLKM) is None
 
-    def test_get_ticker_bundles_extras_and_a_signature(self, service, store, quote_data):
+    async def test_get_ticker_bundles_extras_and_a_signature(self, service, store, quote_data):
         from livestocks.crawler.quote_stream import parse_quote
 
-        service.track("tlkm")
-        store.save_extras("IDX", "TLKM", parse_quote(quote_data), now=7)
+        await service.track("tlkm")
+        await store.save_extras("IDX", "TLKM", parse_quote(quote_data), now=7)
 
-        view = service.get_ticker(TLKM)
+        view = await service.get_ticker(TLKM)
 
         assert view is not None
         assert view.extras is not None
@@ -83,54 +75,56 @@ class TestRead:
         assert view.extras_fetched_at == 7
         assert view.signature == (None, "pending", None, 7)
 
-    def test_price_history_prefers_crawled_bars(self, service, store):
-        service.track("tlkm")
-        store.upsert_prices("IDX", "TLKM", [PriceBar(1, 10.0), PriceBar(2, 11.0)])
+    async def test_price_history_prefers_crawled_bars(self, service, store):
+        await service.track("tlkm")
+        await store.upsert_prices("IDX", "TLKM", [PriceBar(1, 10.0), PriceBar(2, 11.0)])
 
-        assert service.price_history(TLKM) == [PriceBar(1, 10.0), PriceBar(2, 11.0)]
+        assert await service.price_history(TLKM) == [PriceBar(1, 10.0), PriceBar(2, 11.0)]
 
-    def test_price_history_falls_back_to_forecast_snapshots(self, service, store, make_forecast):
-        service.track("tlkm")
-        store.record_success(make_forecast(price=2000.0), 3600, now=100)
-        store.record_success(make_forecast(price=2100.0), 3600, now=200)
+    async def test_price_history_falls_back_to_forecast_snapshots(
+        self, service, store, make_forecast
+    ):
+        await service.track("tlkm")
+        await store.record_success(make_forecast(price=2000.0), 3600, now=100)
+        await store.record_success(make_forecast(price=2100.0), 3600, now=200)
 
-        assert service.price_history(TLKM) == [PriceBar(100, 2000.0), PriceBar(200, 2100.0)]
+        assert await service.price_history(TLKM) == [PriceBar(100, 2000.0), PriceBar(200, 2100.0)]
 
-    def test_price_history_respects_the_since_bound(self, service, store):
-        service.track("tlkm")
-        store.upsert_prices(
+    async def test_price_history_respects_the_since_bound(self, service, store):
+        await service.track("tlkm")
+        await store.upsert_prices(
             "IDX", "TLKM", [PriceBar(1, 10.0), PriceBar(2, 11.0), PriceBar(3, 12.0)]
         )
 
-        assert service.price_history(TLKM, since=2) == [PriceBar(2, 11.0), PriceBar(3, 12.0)]
+        assert await service.price_history(TLKM, since=2) == [PriceBar(2, 11.0), PriceBar(3, 12.0)]
 
-    def test_next_refresh_is_none_without_tickers_and_zero_when_one_is_due(self, service):
-        assert service.seconds_until_next_refresh() is None
+    async def test_next_refresh_is_none_without_tickers_and_zero_when_one_is_due(self, service):
+        assert await service.seconds_until_next_refresh() is None
 
-        service.track("tlkm")
+        await service.track("tlkm")
 
-        assert service.seconds_until_next_refresh() == 0
+        assert await service.seconds_until_next_refresh() == 0
 
-    def test_fetching_is_an_immutable_snapshot(self, service):
+    async def test_fetching_is_an_immutable_snapshot(self, service):
         assert service.fetching() == frozenset()
 
 
 class TestRemoveAndRetry:
-    def test_remove_forgets_the_ticker(self, service):
-        service.track("tlkm")
+    async def test_remove_forgets_the_ticker(self, service):
+        await service.track("tlkm")
 
-        service.remove(TLKM)
+        await service.remove(TLKM)
 
-        assert service.list_tickers() == []
+        assert await service.list_tickers() == []
 
-    def test_retry_revives_a_failed_ticker(self, service, store):
-        service.track("tlkm")
+    async def test_retry_revives_a_failed_ticker(self, service, store):
+        await service.track("tlkm")
         for _ in range(5):
-            store.record_failure("IDX", "TLKM", "boom", 3600, 5)
+            await store.record_failure("IDX", "TLKM", "boom", 3600, 5)
 
-        service.retry(TLKM)
+        await service.retry(TLKM)
 
-        assert service.list_tickers()[0].status is TickerStatus.PENDING
+        assert (await service.list_tickers())[0].status is TickerStatus.PENDING
 
 
 class TestWakeUp:
@@ -144,13 +138,13 @@ class TestWakeUp:
 
         updater = Updater(store, settings, crawler)
         service = ForecastService(store, updater, settings)
-        service.track("tlkm")
+        await service.track("tlkm")
 
         await updater.sweep()
         await updater.drain()
 
         assert crawled == ["TLKM"]
-        assert service.list_tickers()[0].status is TickerStatus.OK
+        assert (await service.list_tickers())[0].status is TickerStatus.OK
 
 
 @pytest.fixture
@@ -191,8 +185,8 @@ class TestGetOrTrack:
         self, running, store, make_forecast
     ):
         service, plan = running
-        service.track("tlkm")
-        store.record_success(make_forecast(), 3600)
+        await store.add_ticker("IDX", "TLKM")
+        await store.record_success(make_forecast(), 3600)
 
         result = await service.get_or_track("tlkm")
 
@@ -203,8 +197,8 @@ class TestGetOrTrack:
         self, running, store, make_forecast
     ):
         service, _ = running
-        service.track("tlkm")
-        store.record_success(make_forecast(), 3600, now=1)
+        await store.add_ticker("IDX", "TLKM")
+        await store.record_success(make_forecast(), 3600, now=1)
 
         result = await service.get_or_track("tlkm")
 
@@ -216,7 +210,7 @@ class TestGetOrTrack:
         with pytest.raises(InvalidTickerError):
             await service.get_or_track("a b")
 
-        assert service.list_tickers() == []
+        assert await service.list_tickers() == []
 
     async def test_unknown_to_tradingview_raises_ticker_not_found(self, running):
         service, plan = running
@@ -234,8 +228,8 @@ class TestGetOrTrack:
 
     async def test_a_ticker_already_failing_fails_fast_by_error_kind(self, running, store):
         service, plan = running
-        service.track("zzzz")
-        store.record_failure(
+        await store.add_ticker("IDX", "ZZZZ")
+        await store.record_failure(
             "IDX", "ZZZZ", "not found on TradingView", 3600, 5, kind=ErrorKind.NOT_FOUND
         )
 
