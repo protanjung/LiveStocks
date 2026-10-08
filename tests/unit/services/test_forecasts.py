@@ -1,9 +1,17 @@
+import asyncio
+
 import pytest
 
 from livestocks.config import Settings
-from livestocks.crawler import CrawlResult
-from livestocks.domain import InvalidTickerError, PriceBar, TickerId, TickerStatus
-from livestocks.services import ForecastService, Updater
+from livestocks.crawler import CrawlResult, NotFoundError, UpstreamError
+from livestocks.domain import ErrorKind, InvalidTickerError, PriceBar, TickerId, TickerStatus
+from livestocks.services import (
+    CrawlTimeoutError,
+    ForecastService,
+    TickerNotFoundError,
+    Updater,
+    UpstreamUnavailableError,
+)
 from livestocks.storage import Store
 
 TLKM = TickerId("IDX", "TLKM")
@@ -139,6 +147,125 @@ class TestWakeUp:
         service.track("tlkm")
 
         await updater.sweep()
+        await updater.drain()
 
         assert crawled == ["TLKM"]
         assert service.list_tickers()[0].status is TickerStatus.OK
+
+
+@pytest.fixture
+async def running(store):
+    """A service whose updater loop is running; crawl behaviour is set through ``plan``."""
+    settings = Settings(jitter_max=0, refresh_interval=3600, poll_interval=60, api_wait_seconds=2)
+    plan: dict = {"calls": [], "delay": None, "error": None, "forecast": None}
+
+    async def crawler(exchange, symbol):
+        plan["calls"].append(symbol)
+        if plan["delay"] is not None:
+            await plan["delay"].wait()
+        if plan["error"] is not None:
+            raise plan["error"]
+        return CrawlResult(plan["forecast"](symbol))
+
+    updater = Updater(store, settings, crawler)
+    await updater.start()
+    yield ForecastService(store, updater, settings), plan
+    await updater.stop()
+
+
+class TestGetOrTrack:
+    async def test_unknown_ticker_is_tracked_and_returned_after_its_first_crawl(
+        self, running, make_forecast
+    ):
+        service, plan = running
+        plan["forecast"] = make_forecast
+
+        result = await service.get_or_track("tlkm")
+
+        assert result.created is True
+        assert result.stale is False
+        assert result.view.ticker.forecast.pt_high == 4150
+        assert plan["calls"] == ["TLKM"]
+
+    async def test_known_ticker_is_answered_from_storage_without_crawling(
+        self, running, store, make_forecast
+    ):
+        service, plan = running
+        service.track("tlkm")
+        store.record_success(make_forecast(), 3600)
+
+        result = await service.get_or_track("tlkm")
+
+        assert result.created is False
+        assert plan["calls"] == []
+
+    async def test_data_older_than_two_refresh_intervals_is_marked_stale(
+        self, running, store, make_forecast
+    ):
+        service, _ = running
+        service.track("tlkm")
+        store.record_success(make_forecast(), 3600, now=1)
+
+        result = await service.get_or_track("tlkm")
+
+        assert result.stale is True
+
+    async def test_malformed_ticker_raises_before_anything_is_tracked(self, running):
+        service, _ = running
+
+        with pytest.raises(InvalidTickerError):
+            await service.get_or_track("a b")
+
+        assert service.list_tickers() == []
+
+    async def test_unknown_to_tradingview_raises_ticker_not_found(self, running):
+        service, plan = running
+        plan["error"] = NotFoundError("not found on TradingView")
+
+        with pytest.raises(TickerNotFoundError, match="not found"):
+            await service.get_or_track("zzzz")
+
+    async def test_upstream_failure_raises_upstream_unavailable(self, running):
+        service, plan = running
+        plan["error"] = UpstreamError("HTTP 503")
+
+        with pytest.raises(UpstreamUnavailableError, match="503"):
+            await service.get_or_track("tlkm")
+
+    async def test_a_ticker_already_failing_fails_fast_by_error_kind(self, running, store):
+        service, plan = running
+        service.track("zzzz")
+        store.record_failure(
+            "IDX", "ZZZZ", "not found on TradingView", 3600, 5, kind=ErrorKind.NOT_FOUND
+        )
+
+        with pytest.raises(TickerNotFoundError):
+            await service.get_or_track("zzzz")
+
+        assert plan["calls"] == []
+
+    async def test_slow_first_crawl_times_out_and_keeps_running(self, running, make_forecast):
+        service, plan = running
+        plan["delay"] = asyncio.Event()
+        plan["forecast"] = make_forecast
+
+        with pytest.raises(CrawlTimeoutError):
+            await service.get_or_track("tlkm", wait_seconds=0.05)
+
+        plan["delay"].set()
+        result = await service.get_or_track("tlkm", wait_seconds=1)
+        assert result.view.ticker.forecast is not None
+        assert plan["calls"] == ["TLKM"]
+
+    async def test_concurrent_first_requests_share_one_crawl(self, running, make_forecast):
+        service, plan = running
+        plan["forecast"] = make_forecast
+        plan["delay"] = asyncio.Event()
+
+        pending = [asyncio.create_task(service.get_or_track("tlkm")) for _ in range(3)]
+        await asyncio.sleep(0.05)
+        plan["delay"].set()
+        results = await asyncio.gather(*pending)
+
+        assert plan["calls"] == ["TLKM"]
+        assert all(r.view.ticker.forecast is not None for r in results)

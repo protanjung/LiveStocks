@@ -46,3 +46,25 @@ class TestMigrate:
 
         with pytest.raises(MigrationError, match="newer"):
             migrate(db)
+
+
+class TestSchemaV2:
+    def test_version_one_database_gains_the_error_kind_column(self, tmp_path):
+        path = tmp_path / "v1.db"
+        old = sqlite3.connect(path)
+        old.executescript(SCHEMA_V1)
+        old.execute("PRAGMA user_version = 1")
+        old.execute(
+            "INSERT INTO tickers (exchange, symbol, added_at, last_error) "
+            "VALUES ('IDX', 'X', 1, 'boom')"
+        )
+        old.commit()
+        old.close()
+
+        store = Store(path)
+
+        [row] = store.rows()
+        assert row.last_error == "boom"
+        assert row.error_kind is None
+        assert user_version(store._db) == len(MIGRATIONS) == 2
+        store.close()

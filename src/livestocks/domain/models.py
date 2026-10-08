@@ -31,6 +31,16 @@ class RatingTone(StrEnum):
     NONE = "none"
 
 
+class ErrorKind(StrEnum):
+    """Why the last crawl of a ticker failed.
+    NOT_FOUND means TradingView has no such ticker; retrying will not help.
+    UPSTREAM covers network, rate-limit, server and parsing problems that may pass.
+    """
+
+    NOT_FOUND = "not_found"
+    UPSTREAM = "upstream"
+
+
 @dataclass(frozen=True, slots=True)
 class TickerId:
     """Exchange and symbol that together identify one ticker.
@@ -157,6 +167,7 @@ class TrackedTicker:
     dead: bool
     forecast: Forecast | None
     fetched_at: int | None
+    error_kind: ErrorKind | None = None
 
     @property
     def id(self) -> TickerId:

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
-from livestocks.domain import Extras, Forecast, Period, PriceBar, TrackedTicker
+from livestocks.domain import ErrorKind, Extras, Forecast, Period, PriceBar, TrackedTicker
 from livestocks.storage.migrations import migrate
 from livestocks.storage.models import FORECAST_COLUMNS, TICKER_ROWS_SQL
 
@@ -50,6 +50,7 @@ def _ticker_row(row: sqlite3.Row) -> TrackedTicker:
         dead=bool(row["dead"]),
         forecast=_forecast(row) if row["fetched_at"] is not None else None,
         fetched_at=row["fetched_at"],
+        error_kind=ErrorKind(row["error_kind"]) if row["error_kind"] else None,
     )
 
 
@@ -116,7 +117,8 @@ class Store:
         """
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE tickers SET next_fetch = 0, fail_count = 0, dead = 0, last_error = NULL "
+                "UPDATE tickers SET next_fetch = 0, fail_count = 0, dead = 0, last_error = NULL, "
+                "error_kind = NULL "
                 "WHERE exchange = ? AND symbol = ?",
                 (exchange, symbol),
             )
@@ -261,10 +263,15 @@ class Store:
     def record_success(self, f: Forecast, interval: int, now: int | None = None) -> None:
         """Store a forecast snapshot and schedule the next refresh after interval seconds.
         Clears the ticker's failure counters and updates its display name.
-        now overrides the clock for tests.
+        Ignored if the ticker was removed while its crawl was running; now overrides the clock.
         """
         now = now or int(time.time())
         with self._lock, self._db:
+            tracked = self._db.execute(
+                "SELECT 1 FROM tickers WHERE exchange = ? AND symbol = ?", (f.exchange, f.symbol)
+            ).fetchone()
+            if tracked is None:  # removed while fetching
+                return
             self._db.execute(
                 f"INSERT INTO forecasts (exchange, symbol, fetched_at, {_FORECAST_COLS}) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -287,7 +294,8 @@ class Store:
             )
             self._db.execute(
                 "UPDATE tickers SET name = COALESCE(?, name), last_fetch = ?, next_fetch = ?, "
-                "last_error = NULL, fail_count = 0, dead = 0 WHERE exchange = ? AND symbol = ?",
+                "last_error = NULL, error_kind = NULL, fail_count = 0, dead = 0 "
+                "WHERE exchange = ? AND symbol = ?",
                 (f.name, now, now + interval, f.exchange, f.symbol),
             )
 
@@ -299,9 +307,10 @@ class Store:
         interval: int,
         max_failures: int,
         now: int | None = None,
+        kind: ErrorKind | None = None,
     ) -> None:
         """Count a failed crawl and schedule a retry with exponential backoff.
-        After max_failures failures in a row the ticker is marked dead.
+        After max_failures failures in a row the ticker is marked dead; kind records why it failed.
         Ignored if the ticker was removed while its crawl was running.
         """
         now = now or int(time.time())
@@ -315,7 +324,15 @@ class Store:
             fails = r["fail_count"] + 1
             backoff = min(interval, 60 * 2**fails)
             self._db.execute(
-                "UPDATE tickers SET fail_count = ?, last_error = ?, next_fetch = ?, dead = ? "
-                "WHERE exchange = ? AND symbol = ?",
-                (fails, error, now + backoff, int(fails >= max_failures), exchange, symbol),
+                "UPDATE tickers SET fail_count = ?, last_error = ?, error_kind = ?, "
+                "next_fetch = ?, dead = ? WHERE exchange = ? AND symbol = ?",
+                (
+                    fails,
+                    error,
+                    kind.value if kind else None,
+                    now + backoff,
+                    int(fails >= max_failures),
+                    exchange,
+                    symbol,
+                ),
             )

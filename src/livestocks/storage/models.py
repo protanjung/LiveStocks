@@ -1,5 +1,5 @@
 """SQLite schema (DDL) and the shared SQL fragments built on it.
-SCHEMA_V1 is the baseline; later versions are added in migrations.py.
+SCHEMA_V1 is the baseline and SCHEMA_V2 adds the crawl error kind to tickers.
 FORECAST_COLUMNS and TICKER_ROWS_SQL keep the store's queries consistent.
 """
 
@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS extras (
 CREATE INDEX IF NOT EXISTS forecasts_ticker_time ON forecasts (exchange, symbol, fetched_at);
 """
 
+SCHEMA_V2 = """
+ALTER TABLE tickers ADD COLUMN error_kind TEXT;
+"""
+
 FORECAST_COLUMNS = (
     "name, price, change_pct, pt_avg, pt_high, pt_low, n_analysts, "
     "rating_mark, n_ratings, ath, next_earnings"
@@ -58,7 +62,8 @@ FORECAST_COLUMNS = (
 # Every tracked ticker joined to its latest forecast snapshot (if any).
 TICKER_ROWS_SQL = """
 SELECT t.exchange, t.symbol, t.name AS tname, t.added_at, t.last_fetch, t.next_fetch,
-       t.last_error, t.fail_count, t.dead, f.fetched_at, f.name, f.price, f.change_pct,
+       t.last_error, t.error_kind, t.fail_count, t.dead, f.fetched_at, f.name, f.price,
+       f.change_pct,
        f.pt_avg, f.pt_high, f.pt_low, f.n_analysts, f.rating_mark, f.n_ratings, f.ath,
        f.next_earnings
 FROM tickers t

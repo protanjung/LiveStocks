@@ -6,11 +6,11 @@ Databases created before versioning are adopted by the idempotent first step.
 import sqlite3
 
 from livestocks.storage.errors import MigrationError
-from livestocks.storage.models import SCHEMA_V1
+from livestocks.storage.models import SCHEMA_V1, SCHEMA_V2
 
 # MIGRATIONS[i] upgrades a database from version i to i + 1. The first step only uses
 # CREATE ... IF NOT EXISTS, so it also adopts databases created before versioning existed.
-MIGRATIONS: list[str] = [SCHEMA_V1]
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2]
 
 
 def migrate(db: sqlite3.Connection) -> int:

@@ -1,6 +1,6 @@
 """Background loop that keeps every tracked ticker's forecast fresh.
-It polls the store for due tickers and crawls them with bounded concurrency.
-Outcomes, including failures with backoff, are written back to the store.
+It polls the store for due tickers and starts one crawl task per ticker, bounded by a semaphore.
+Callers can watch a ticker to learn when its running or next crawl has finished.
 """
 
 import asyncio
@@ -13,7 +13,8 @@ from collections.abc import Awaitable, Callable
 import httpx
 
 from livestocks.config import Settings
-from livestocks.crawler import CrawlError, CrawlResult, crawl_ticker
+from livestocks.crawler import CrawlError, CrawlResult, NotFoundError, UpstreamError, crawl_ticker
+from livestocks.domain import ErrorKind
 from livestocks.storage import Store
 
 log = logging.getLogger("livestocks.updater")
@@ -36,7 +37,9 @@ class Updater:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._sem = asyncio.Semaphore(settings.concurrency)
-        self.fetching: set[str] = set()  # "EXCH:SYM" keys currently in flight, read by the UI
+        self._inflight: dict[str, asyncio.Task[None]] = {}
+        self._waiters: dict[str, list[asyncio.Future[None]]] = {}
+        self.fetching: set[str] = set()  # "EXCH:SYM" keys currently crawling, read by the UI
 
     async def start(self) -> None:
         """Start the polling loop as a background task.
@@ -50,13 +53,16 @@ class Updater:
         self._task = asyncio.create_task(self._run(), name="livestocks-updater")
 
     async def stop(self) -> None:
-        """Cancel the polling loop and close the HTTP client.
+        """Cancel the polling loop and every running crawl, then close the HTTP client.
+        Anyone still watching a ticker is told the updater stopped.
         Safe to call even if start() never ran.
-        Registered as a NiceGUI shutdown hook.
         """
-        if self._task:
-            self._task.cancel()
-            await asyncio.gather(self._task, return_exceptions=True)
+        tasks = [t for t in [self._task, *self._inflight.values()] if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for key in list(self._waiters):
+            self._resolve(key, UpstreamError("the updater stopped"))
         if self._client:
             await self._client.aclose()
 
@@ -66,6 +72,35 @@ class Updater:
         Waking during a sweep schedules another one right after it.
         """
         self._wake.set()
+
+    def watch(self, key: str) -> asyncio.Future[None]:
+        """Return a future that resolves when the next crawl of EXCHANGE:SYMBOL finishes.
+        It yields None on success and raises the crawl's exception on failure.
+        Register before reading the store so a crawl finishing in between is not missed.
+        """
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._waiters.setdefault(key, []).append(future)
+        return future
+
+    def unwatch(self, key: str, future: asyncio.Future[None]) -> None:
+        """Forget a future returned by watch(), for example after the caller timed out.
+        Does nothing if it already resolved or was never registered.
+        An exception set on a forgotten future is marked as retrieved to keep logs quiet.
+        """
+        waiting = self._waiters.get(key)
+        if waiting and future in waiting:
+            waiting.remove(future)
+            if not waiting:
+                del self._waiters[key]
+        if future.done() and not future.cancelled():
+            future.exception()
+
+    async def drain(self) -> None:
+        """Wait until every crawl that is currently running has finished.
+        Mostly useful in tests and during a graceful shutdown.
+        New crawls started meanwhile are not awaited.
+        """
+        await asyncio.gather(*list(self._inflight.values()), return_exceptions=True)
 
     async def _default_crawl(self, exchange: str, symbol: str) -> CrawlResult:
         assert self._client is not None
@@ -84,46 +119,77 @@ class Updater:
             self._wake.clear()
 
     async def sweep(self) -> None:
-        """Crawl every ticker that is due and wait for all of them to finish.
+        """Start a crawl task for every due ticker that is not already being crawled.
+        Returns at once without waiting for the crawls; use drain() for that.
         Concurrency is limited by Settings.concurrency.
-        Each ticker's outcome is recorded individually.
         """
-        due = self.store.due()
-        if due:
-            await asyncio.gather(*(self._update(ex, sym) for ex, sym in due))
+        for exchange, symbol in self.store.due():
+            key = f"{exchange}:{symbol}"
+            if key in self._inflight:
+                continue
+            task = asyncio.create_task(self._update(exchange, symbol), name=f"crawl-{key}")
+            self._inflight[key] = task
+            task.add_done_callback(lambda _done, k=key: self._inflight.pop(k, None))
 
     async def _update(self, exchange: str, symbol: str) -> None:
+        key = f"{exchange}:{symbol}"
+        outcome: BaseException | None = None
+        try:
+            async with self._sem:
+                outcome = await self._crawl_and_record(exchange, symbol)
+        except asyncio.CancelledError:
+            outcome = UpstreamError("the crawl was cancelled")
+            raise
+        finally:
+            self._resolve(key, outcome)
+
+    async def _crawl_and_record(self, exchange: str, symbol: str) -> BaseException | None:
+        """Crawl one ticker and store the result; return the failure, or None on success."""
         assert self._crawler is not None
         key = f"{exchange}:{symbol}"
         s = self.settings
-        async with self._sem:
-            self.fetching.add(key)
-            try:
-                if s.jitter_max:
-                    await asyncio.sleep(random.uniform(0, s.jitter_max))
-                result = await self._crawler(exchange, symbol)
-                self.store.record_success(result.forecast, s.refresh_interval)
-                if result.prices is not None:
-                    self.store.upsert_prices(exchange, symbol, result.prices)
-                if result.extras is not None:
-                    self.store.save_extras(exchange, symbol, result.extras)
-                log.info("updated %s", key)
-            except CrawlError as e:
-                log.warning("fetch %s failed: %s", key, e)
-                self.store.record_failure(
-                    exchange, symbol, str(e), s.refresh_interval, s.max_failures
-                )
-            except Exception as e:
-                log.exception("unexpected error fetching %s", key)
-                self.store.record_failure(
-                    exchange,
-                    symbol,
-                    f"unexpected: {e.__class__.__name__}",
-                    s.refresh_interval,
-                    s.max_failures,
-                )
-            finally:
-                self.fetching.discard(key)
+        self.fetching.add(key)
+        try:
+            if s.jitter_max:
+                await asyncio.sleep(random.uniform(0, s.jitter_max))
+            result = await self._crawler(exchange, symbol)
+            self.store.record_success(result.forecast, s.refresh_interval)
+            if result.prices is not None:
+                self.store.upsert_prices(exchange, symbol, result.prices)
+            if result.extras is not None:
+                self.store.save_extras(exchange, symbol, result.extras)
+            log.info("updated %s", key)
+            return None
+        except CrawlError as e:
+            log.warning("fetch %s failed: %s", key, e)
+            kind = ErrorKind.NOT_FOUND if isinstance(e, NotFoundError) else ErrorKind.UPSTREAM
+            self.store.record_failure(
+                exchange, symbol, str(e), s.refresh_interval, s.max_failures, kind=kind
+            )
+            return e
+        except Exception as e:
+            log.exception("unexpected error fetching %s", key)
+            failure = UpstreamError(f"unexpected: {e.__class__.__name__}")
+            self.store.record_failure(
+                exchange,
+                symbol,
+                str(failure),
+                s.refresh_interval,
+                s.max_failures,
+                kind=ErrorKind.UPSTREAM,
+            )
+            return failure
+        finally:
+            self.fetching.discard(key)
+
+    def _resolve(self, key: str, error: BaseException | None) -> None:
+        for future in self._waiters.pop(key, []):
+            if future.done():
+                continue
+            if error is None:
+                future.set_result(None)
+            else:
+                future.set_exception(error)
 
     def next_sweep_in(self) -> int | None:
         """Return seconds until the next ticker is due, or None when nothing is tracked.

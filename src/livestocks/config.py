@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     max_failures: int = (
         5  # consecutive failures before a ticker is marked dead (kept, no longer fetched)
     )
+    api_wait_seconds: float = 30.0  # how long the forecast endpoint waits for a first crawl
     log_level: str = "INFO"
     host: str = "127.0.0.1"
     port: int = 8080

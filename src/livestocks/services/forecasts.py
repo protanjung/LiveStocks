@@ -3,9 +3,26 @@ It hides the store, the updater and the crawler behind a small set of operations
 Callers never import storage or crawler directly.
 """
 
+import asyncio
+import time
+
 from livestocks.config import Settings
-from livestocks.domain import PriceBar, TickerId, TrackedTicker, parse_ticker
-from livestocks.services.models import TickerView, TrackResult
+from livestocks.crawler import CrawlError, NotFoundError
+from livestocks.domain import (
+    ErrorKind,
+    PriceBar,
+    TickerId,
+    TickerStatus,
+    TrackedTicker,
+    parse_ticker,
+)
+from livestocks.services.errors import (
+    CrawlTimeoutError,
+    ServiceError,
+    TickerNotFoundError,
+    UpstreamUnavailableError,
+)
+from livestocks.services.models import ForecastResult, TickerView, TrackResult
 from livestocks.services.updater import Updater
 from livestocks.storage import Store
 
@@ -95,3 +112,57 @@ class ForecastService:
         """
         self._store.retry(ticker.exchange, ticker.symbol)
         self._updater.wake()
+
+    async def get_or_track(self, raw: str, wait_seconds: float | None = None) -> ForecastResult:
+        """Return a ticker's stored forecast, tracking it and waiting for its first crawl if new.
+        Raises InvalidTickerError or a ServiceError subclass: not found, upstream or timeout.
+        wait_seconds caps the wait and defaults to Settings.api_wait_seconds.
+        """
+        ticker = parse_ticker(raw, self._settings.default_exchange)
+        limit = self._settings.api_wait_seconds if wait_seconds is None else wait_seconds
+        # Watch before reading the store so a crawl that finishes in between cannot be missed.
+        waiter = self._updater.watch(ticker.key)
+        try:
+            created = self._store.add_ticker(ticker.exchange, ticker.symbol)
+            ready = self._ready(self.get_ticker(ticker), created)
+            if ready is not None:
+                return ready
+            self._updater.wake()
+            try:
+                await asyncio.wait_for(asyncio.shield(waiter), limit)
+            except TimeoutError as e:
+                raise CrawlTimeoutError(
+                    f"{ticker.key} was not ready within {limit:g} s; try again shortly"
+                ) from e
+            except CrawlError as e:
+                raise _as_service_error(e) from e
+            ready = self._ready(self.get_ticker(ticker), created)
+            if ready is None:
+                raise UpstreamUnavailableError(f"the crawl of {ticker.key} produced no data")
+            return ready
+        finally:
+            self._updater.unwatch(ticker.key, waiter)
+
+    def _ready(self, view: TickerView | None, created: bool) -> ForecastResult | None:
+        """Return the answer if data exists, None if still pending, or raise for a known failure."""
+        if view is None:
+            return None
+        ticker = view.ticker
+        if ticker.forecast is not None:
+            return ForecastResult(view, created, self._is_stale(ticker))
+        if ticker.status in (TickerStatus.ERROR, TickerStatus.FAILED):
+            if ticker.error_kind is ErrorKind.NOT_FOUND:
+                raise TickerNotFoundError(ticker.last_error or "ticker not found")
+            raise UpstreamUnavailableError(ticker.last_error or "the upstream request failed")
+        return None
+
+    def _is_stale(self, ticker: TrackedTicker) -> bool:
+        if ticker.fetched_at is None:
+            return False
+        return time.time() - ticker.fetched_at > 2 * self._settings.refresh_interval
+
+
+def _as_service_error(error: CrawlError) -> ServiceError:
+    if isinstance(error, NotFoundError):
+        return TickerNotFoundError(str(error))
+    return UpstreamUnavailableError(str(error))

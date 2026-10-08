@@ -1,6 +1,6 @@
 """Read models returned by the forecast service.
 TickerView bundles a tracked ticker with its extras for one page render.
-TrackResult reports what happened when a ticker was submitted.
+TrackResult reports a submitted ticker and ForecastResult is what the API returns.
 """
 
 from dataclasses import dataclass
@@ -38,3 +38,15 @@ class TrackResult:
 
     ticker: TickerId
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ForecastResult:
+    """A ticker's stored forecast as handed to API callers.
+    view always carries a forecast; created says whether this request started tracking it.
+    stale is True when the data is older than twice the refresh interval.
+    """
+
+    view: TickerView
+    created: bool
+    stale: bool

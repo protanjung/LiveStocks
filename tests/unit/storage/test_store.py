@@ -121,3 +121,33 @@ class TestExtras:
         store.queue_missing_extras()
 
         assert store.due(now=1) == [("IDX", "B")]
+
+
+class TestErrorKind:
+    def test_failure_records_why_and_success_clears_it(self, store, make_forecast):
+        from livestocks.domain import ErrorKind
+
+        store.add_ticker("IDX", "TLKM")
+        store.record_failure("IDX", "TLKM", "HTTP 503", 3600, 5, kind=ErrorKind.UPSTREAM)
+        assert store.row("IDX", "TLKM").error_kind is ErrorKind.UPSTREAM
+
+        store.record_success(make_forecast(), 3600)
+
+        assert store.row("IDX", "TLKM").error_kind is None
+
+    def test_retry_clears_the_kind(self, store):
+        from livestocks.domain import ErrorKind
+
+        store.add_ticker("IDX", "ZZZZ")
+        store.record_failure("IDX", "ZZZZ", "gone", 3600, 5, kind=ErrorKind.NOT_FOUND)
+
+        store.retry("IDX", "ZZZZ")
+
+        assert store.row("IDX", "ZZZZ").error_kind is None
+
+
+class TestRemovedWhileCrawling:
+    def test_a_success_for_an_untracked_ticker_is_ignored(self, store, make_forecast):
+        store.record_success(make_forecast(), 3600)
+
+        assert store.history("IDX", "TLKM") == []
