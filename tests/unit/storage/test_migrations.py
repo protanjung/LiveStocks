@@ -6,7 +6,7 @@ from alembic import command
 from livestocks.storage import MigrationError, Store
 from livestocks.storage.db import alembic_config, upgrade_database
 
-BASELINE = "0001"
+HEAD = "0002"
 
 # The schema the app created before Alembic, tracked with PRAGMA user_version = 2.
 PRE_ALEMBIC_SCHEMA = """
@@ -55,8 +55,25 @@ class TestUpgradeDatabase:
 
         upgrade_database(path)
 
-        assert {"tickers", "forecasts", "prices", "extras", "alembic_version"} <= tables(path)
-        assert revision(path) == BASELINE
+        assert {"tickers", "forecasts", "prices", "extras", "suggestion_reports"} <= tables(path)
+        assert revision(path) == HEAD
+
+    def test_baseline_database_keeps_its_rows_when_the_suggestion_table_is_added(self, tmp_path):
+        path = tmp_path / "baseline.db"
+        command.upgrade(alembic_config(path), "0001")
+        old = sqlite3.connect(path)
+        old.execute("INSERT INTO tickers (exchange, symbol, added_at) VALUES ('IDX', 'TLKM', 5)")
+        old.commit()
+        old.close()
+        assert "suggestion_reports" not in tables(path)
+
+        upgrade_database(path)
+
+        db = sqlite3.connect(path)
+        assert db.execute("SELECT symbol FROM tickers").fetchall() == [("TLKM",)]
+        db.close()
+        assert "suggestion_reports" in tables(path)
+        assert revision(path) == HEAD
 
     def test_running_twice_changes_nothing(self, tmp_path):
         path = tmp_path / "twice.db"
@@ -64,7 +81,7 @@ class TestUpgradeDatabase:
 
         upgrade_database(path)
 
-        assert revision(path) == BASELINE
+        assert revision(path) == HEAD
 
     def test_database_from_the_pre_alembic_scheme_is_adopted_with_its_rows(self, tmp_path):
         path = tmp_path / "legacy.db"
@@ -85,7 +102,7 @@ class TestUpgradeDatabase:
             ("TLKM", "boom", "upstream")
         ]
         db.close()
-        assert revision(path) == BASELINE
+        assert revision(path) == HEAD
 
     def test_database_older_than_the_last_pre_alembic_version_is_rejected(self, tmp_path):
         path = tmp_path / "v1.db"
@@ -107,7 +124,7 @@ class TestStoreInitialize:
         assert await store.add_ticker("IDX", "TLKM") is True
         assert [r.key for r in await store.rows()] == ["IDX:TLKM"]
         await store.close()
-        assert revision(tmp_path / "data" / "app.db") == BASELINE
+        assert revision(tmp_path / "data" / "app.db") == HEAD
 
     async def test_data_survives_reopening_the_database(self, tmp_path):
         path = tmp_path / "app.db"

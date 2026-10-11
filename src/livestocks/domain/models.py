@@ -207,3 +207,16 @@ class TrackedTicker:
         if f and f.pt_avg and f.price:
             return f.pt_avg / f.price - 1
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestionReport:
+    """One day's stock suggestions as delivered by the scheduled Claude routine.
+    payload is the validated idx-suggestions JSON text, kept verbatim.
+    date is the Jakarta trading date it is for and received_at is unix seconds.
+    """
+
+    date: str
+    generated_at: str
+    received_at: int
+    payload: str

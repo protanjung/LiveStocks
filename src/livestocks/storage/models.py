@@ -79,3 +79,17 @@ class ExtrasTable(SQLModel, table=True):
     symbol: str = Field(primary_key=True)
     fetched_at: int
     data: str
+
+
+class SuggestionReportTable(SQLModel, table=True):
+    """The stock suggestions of one trading day, kept as validated JSON text.
+    The date is the primary key, so a re-run for the same day replaces the report.
+    received_at says when the app stored it, in unix seconds.
+    """
+
+    __tablename__ = "suggestion_reports"  # pyright: ignore[reportAssignmentType]
+
+    date: str = Field(primary_key=True)
+    generated_at: str
+    received_at: int
+    payload: str

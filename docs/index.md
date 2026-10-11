@@ -25,7 +25,7 @@ See [Data sources](data-sources.md) for why three sources are needed and how fra
 ## Where to go next
 
 - [Quickstart](quickstart.md): run it locally or in Docker and make your first request.
-- [HTTP API](api.md): the endpoint, its status codes and examples.
+- [HTTP API](api.md): the endpoints, their status codes and examples.
 - [Architecture](architecture.md): how the code is organised and why.
 - [Development](development.md): tooling, code style and how to extend the project.
 

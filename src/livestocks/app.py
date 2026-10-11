@@ -7,11 +7,11 @@ from nicegui import app, ui
 from nicegui.ui_run import DocsConfig
 
 from livestocks import __version__
-from livestocks.api import build_router, register_error_handlers
+from livestocks.api import build_router, build_suggestions_router, register_error_handlers
 from livestocks.config import Settings
 from livestocks.config import settings as default_settings
 from livestocks.logging_config import configure_logging
-from livestocks.services import ForecastService, Updater
+from livestocks.services import ForecastService, SuggestionService, Updater
 from livestocks.storage import Store
 from livestocks.ui import register
 
@@ -34,6 +34,7 @@ def create_app(settings: Settings = default_settings) -> None:
     store = Store(settings.db_path)
     updater = Updater(store, settings)
     service = ForecastService(store, updater, settings)
+    suggestions = SuggestionService(store)
 
     async def startup() -> None:
         await store.initialize()
@@ -47,6 +48,7 @@ def create_app(settings: Settings = default_settings) -> None:
     app.on_shutdown(shutdown)
     register(service, settings)
     app.include_router(build_router(service), prefix="/api/v1")
+    app.include_router(build_suggestions_router(suggestions, settings), prefix="/api/v1")
     register_error_handlers(app)
     # NiceGUI keeps URLs that are already set when fastapi_docs is enabled in main().
     app.docs_url, app.redoc_url, app.openapi_url = "/api/docs", "/api/redoc", "/api/openapi.json"

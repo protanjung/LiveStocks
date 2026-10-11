@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     log_json: bool = False  # one JSON object per log line, for log collectors
     host: str = "127.0.0.1"
     port: int = 8080
+    api_token: str | None = None  # bearer token for the suggestion endpoints; unset disables POST
 
 
 settings = Settings()

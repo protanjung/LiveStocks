@@ -113,6 +113,7 @@ rejected with a clear error instead of being damaged.
 | `forecasts` | One row per crawl: the history of targets and ratings. The newest row is the current forecast. |
 | `prices` | Daily closes, replaced by timestamp on every crawl. |
 | `extras` | The latest EPS, revenue and rating counts as JSON. |
+| `suggestion_reports` | One row per trading date: the daily stock suggestions delivered by the scheduled routine, as validated JSON. |
 
 ## Retries and logging
 

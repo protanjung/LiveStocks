@@ -31,6 +31,11 @@ returns its forecast. Known tickers are answered from storage at once. Errors us
 unknown ticker, `422` malformed ticker, `502` upstream failure, `504` first crawl too slow. Interactive docs are at
 `/api/docs`.
 
+The scheduled Claude routine "Daily IDX Stock Suggestions" delivers its JSON report with
+`POST /api/v1/suggestions`; read it back with `GET /api/v1/suggestions/latest`, `/suggestions/{date}` or
+`/suggestions` (history). All of them use `Authorization: Bearer $LIVESTOCKS_API_TOKEN`; without that variable
+delivery is disabled. See the API page of the documentation.
+
 ## Configuration
 
 Environment variables prefixed `LIVESTOCKS_` (or a `.env` file), for example `LIVESTOCKS_PORT`,

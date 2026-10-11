@@ -1,13 +1,23 @@
 """Pydantic models that define the JSON the HTTP API returns.
-ForecastResponse is built from a service ForecastResult; ErrorResponse is the shared error body.
-Percentages are plain numbers in percent, for example 46.9 means 46.9%.
+ForecastResponse and the suggestion models (idx-suggestions/v1) are built from service results.
+ErrorResponse is the shared error body; percentages are plain numbers, so 46.9 means 46.9%.
 """
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from livestocks.domain import Extras, Forecast, Period, TickerStatus, TrackedTicker, rating_label
+from livestocks.domain import (
+    Extras,
+    Forecast,
+    Period,
+    SuggestionReport,
+    TickerStatus,
+    TrackedTicker,
+    rating_label,
+)
 from livestocks.services import ForecastResult
 
 
@@ -167,7 +177,7 @@ class ForecastResponse(BaseModel):
 class ErrorResponse(BaseModel):
     """Body of every error answer: a stable machine code and a human message.
     Clients should branch on code; detail is for people and may change.
-    The codes are invalid_ticker, ticker_not_found, upstream_error and crawl_timeout.
+    Codes are listed in docs/api.md, for example ticker_not_found, unauthorized or invalid_payload.
     """
 
     code: str = Field(examples=["ticker_not_found"])
@@ -218,3 +228,168 @@ def _estimates(extras: Extras | None) -> EstimatesOut | None:
             quarterly=[_period(p) for p in extras.rev_fq],
         ),
     )
+
+
+class OrderCondition(BaseModel):
+    """The price condition of an auto order: price compared with value.
+    The operator is <= for a buy and >= for a sell.
+    value is a whole rupiah amount on a valid IDX tick.
+    """
+
+    type: Literal["price"]
+    operator: Literal[">=", "<="]
+    value: int
+
+
+class OrderExecution(BaseModel):
+    """How an auto order is executed once its condition is met.
+    Only execution by a limit price is used.
+    price is a whole rupiah amount.
+    """
+
+    by: Literal["price"]
+    price: int
+
+
+class Order(BaseModel):
+    """One Growin PRO auto order the user may place: side, stock, dates, condition and lots.
+    exits use the same shape with a label, TP1 or STOP.
+    qty_lots counts lots of 100 shares.
+    """
+
+    label: str | None = None
+    side: Literal["BUY", "SELL"]
+    stock: str
+    start_date: date
+    end_date: date
+    condition: OrderCondition
+    execute: OrderExecution
+    qty_lots: int = Field(ge=1)
+
+
+class Entry(BaseModel):
+    """The entry zone of a suggestion and the single limit price to use.
+    Any value is null when it could not be supported by the sources.
+    Prices are whole rupiah.
+    """
+
+    low: int | None = None
+    high: int | None = None
+    price: int | None = None
+
+
+class Market(BaseModel):
+    """The market snapshot at the top of a brief.
+    ihsg_last is the latest IHSG close, or null when unknown.
+    summary is the one-line snapshot.
+    """
+
+    ihsg_last: float | None = None
+    summary: str
+
+
+class Suggestion(BaseModel):
+    """One stock row of the brief: action, size, trade levels and the reason.
+    lots is 0 for HOLD; auto_order and exits are only set for a verified BUY or SELL.
+    Prices are whole rupiah and stop_pct is a negative percent from the entry price.
+    """
+
+    ticker: str = Field(pattern=r"^[A-Z0-9]{1,10}$", examples=["BBCA"])
+    name: str
+    held: bool
+    action: Literal["BUY", "SELL", "HOLD"]
+    lots: int = Field(ge=0)
+    reference_price: int | None = None
+    reference_source: Literal["search", "sheet"] | None = None
+    entry: Entry
+    tp1: int | None = None
+    tp2: int | None = None
+    stop: int | None = None
+    stop_pct: float | None = None
+    rr: float | None = None
+    post_trade_weight_pct: float | None = None
+    verified: bool
+    reason: str
+    auto_order: Order | None = None
+    exits: list[Order] = []
+
+
+class SuggestionsPayload(BaseModel):
+    """The idx-suggestions/v1 document the scheduled routine delivers once a trading day.
+    schema_version is sent under the JSON key schema.
+    date is the Jakarta trading date the brief is for.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    schema_version: Literal["idx-suggestions/v1"] = Field(alias="schema")
+    date: date
+    generated_at: datetime
+    market: Market
+    suggestions: list[Suggestion]
+    disclaimer: str
+
+
+class SuggestionsResponse(SuggestionsPayload):
+    """A stored suggestions document as the API returns it.
+    received_at says when LiveStocks stored it, as a UTC timestamp.
+    Everything else is the delivered payload, validated again on the way out.
+    """
+
+    received_at: datetime
+
+    @classmethod
+    def from_report(cls, report: SuggestionReport) -> "SuggestionsResponse":
+        """Build the response from a stored report by parsing its payload JSON.
+        Raises ValueError if the stored text is no longer valid.
+        The received time comes from the report, not the payload.
+        """
+        data = json.loads(report.payload)
+        data["received_at"] = datetime.fromtimestamp(report.received_at, UTC)
+        return cls.model_validate(data)
+
+
+class SuggestionAccepted(BaseModel):
+    """Answer to a successful delivery of a suggestions document.
+    date is the trading date it was stored under; a repeat for the same date replaced the old one.
+    count is the number of stock rows it held.
+    """
+
+    date: date
+    received_at: datetime
+    count: int
+
+
+class SuggestionDay(BaseModel):
+    """One line of the suggestions history: a trading date with its action counts.
+    Fetch the date for the full table.
+    Counts are of stock rows by action.
+    """
+
+    date: date
+    generated_at: datetime
+    received_at: datetime
+    ihsg_last: float | None
+    summary: str
+    buy: int
+    sell: int
+    hold: int
+
+    @classmethod
+    def from_report(cls, report: SuggestionReport) -> "SuggestionDay":
+        """Summarise a stored report by parsing its payload JSON.
+        Raises ValueError if the stored text is no longer valid.
+        Counts the stock rows by action.
+        """
+        full = SuggestionsResponse.from_report(report)
+        actions = [s.action for s in full.suggestions]
+        return cls(
+            date=full.date,
+            generated_at=full.generated_at,
+            received_at=full.received_at,
+            ihsg_last=full.market.ihsg_last,
+            summary=full.market.summary,
+            buy=actions.count("BUY"),
+            sell=actions.count("SELL"),
+            hold=actions.count("HOLD"),
+        )

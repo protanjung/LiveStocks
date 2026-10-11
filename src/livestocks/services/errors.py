@@ -30,3 +30,10 @@ class CrawlTimeoutError(ServiceError):
     The crawl keeps running in the background.
     Asking again later returns the data once it is stored.
     """
+
+
+class SuggestionNotFoundError(ServiceError):
+    """No stock suggestion report is stored for the requested date, or none at all yet.
+    The routine that produces them runs on weekday mornings.
+    Asking again after its next run may succeed.
+    """

@@ -6,8 +6,8 @@ Extras are serialised as JSON text because they are always read and written as o
 import json
 from dataclasses import asdict
 
-from livestocks.domain import ErrorKind, Extras, Forecast, Period, TrackedTicker
-from livestocks.storage.models import ForecastTable, TickerTable
+from livestocks.domain import ErrorKind, Extras, Forecast, Period, SuggestionReport, TrackedTicker
+from livestocks.storage.models import ForecastTable, SuggestionReportTable, TickerTable
 
 _PERIOD_FIELDS = ("eps_fy", "eps_fq", "rev_fy", "rev_fq")
 
@@ -95,3 +95,16 @@ def extras_from_json(text: str) -> Extras:
     for name in _PERIOD_FIELDS:
         data[name] = tuple(Period(**period) for period in data[name])
     return Extras(**data)
+
+
+def suggestion_from_row(row: SuggestionReportTable) -> SuggestionReport:
+    """Build a SuggestionReport from one stored report row.
+    The payload stays the JSON text it was saved as.
+    Nothing is parsed here; the api layer validates it on the way out.
+    """
+    return SuggestionReport(
+        date=row.date,
+        generated_at=row.generated_at,
+        received_at=row.received_at,
+        payload=row.payload,
+    )

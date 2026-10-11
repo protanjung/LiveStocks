@@ -15,16 +15,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from sqlmodel import SQLModel, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from livestocks.domain import ErrorKind, Extras, Forecast, PriceBar, TrackedTicker
+from livestocks.domain import ErrorKind, Extras, Forecast, PriceBar, SuggestionReport, TrackedTicker
 from livestocks.storage.db import create_engine, upgrade_database
 from livestocks.storage.mapping import (
     extras_from_json,
     extras_to_json,
     forecast_from_row,
     forecast_to_row,
+    suggestion_from_row,
     tracked_from_rows,
 )
-from livestocks.storage.models import ExtrasTable, ForecastTable, PriceTable, TickerTable
+from livestocks.storage.models import (
+    ExtrasTable,
+    ForecastTable,
+    PriceTable,
+    SuggestionReportTable,
+    TickerTable,
+)
 
 
 def _now(now: int | None) -> int:
@@ -340,3 +347,60 @@ class Store:
             ticker.next_fetch = stamp + min(interval, 60 * 2**fails)
             ticker.dead = fails >= max_failures
             session.add(ticker)
+
+    # ---- suggestion reports ----
+    async def save_suggestions(
+        self, date: str, generated_at: str, payload: str, now: int | None = None
+    ) -> SuggestionReport:
+        """Store the suggestions of a trading day, replacing any earlier report for that date.
+        payload is the validated JSON text; now overrides the received time and exists for tests.
+        Returns the report as stored.
+        """
+        stamp = _now(now)
+        statement = insert(SuggestionReportTable).values(
+            date=date, generated_at=generated_at, received_at=stamp, payload=payload
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=["date"],
+            set_={
+                "generated_at": statement.excluded.generated_at,
+                "received_at": statement.excluded.received_at,
+                "payload": statement.excluded.payload,
+            },
+        )
+        async with self._sessions.begin() as session:
+            await session.exec(statement)
+        return SuggestionReport(date, generated_at, stamp, payload)
+
+    async def suggestions_on(self, date: str) -> SuggestionReport | None:
+        """Return the report for a trading date (YYYY-MM-DD), or None if there is none.
+        Dates compare as plain text, which orders them correctly.
+        Used by the by-date endpoint.
+        """
+        async with self._sessions() as session:
+            row = await session.get(SuggestionReportTable, date)
+        return suggestion_from_row(row) if row else None
+
+    async def latest_suggestions(self) -> SuggestionReport | None:
+        """Return the report with the newest trading date, or None if nothing was stored yet.
+        The date decides, not the time of arrival, so a late re-run of an old day does not win.
+        Used by the latest endpoint.
+        """
+        statement = select(SuggestionReportTable).order_by(col(SuggestionReportTable.date).desc())
+        async with self._sessions() as session:
+            row = (await session.exec(statement)).first()
+        return suggestion_from_row(row) if row else None
+
+    async def recent_suggestions(self, limit: int) -> list[SuggestionReport]:
+        """Return up to limit reports, newest trading date first.
+        Each one carries its full payload.
+        The list endpoint summarises them.
+        """
+        statement = (
+            select(SuggestionReportTable)
+            .order_by(col(SuggestionReportTable.date).desc())
+            .limit(limit)
+        )
+        async with self._sessions() as session:
+            rows = (await session.exec(statement)).all()
+        return [suggestion_from_row(row) for row in rows]
