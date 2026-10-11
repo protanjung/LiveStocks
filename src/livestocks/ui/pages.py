@@ -13,8 +13,9 @@ from nicegui import app, ui
 
 from livestocks.config import Settings
 from livestocks.domain import TickerId, TrackedTicker
-from livestocks.services import ForecastService, TickerView
+from livestocks.services import ForecastService, SuggestionService, TickerView
 from livestocks.ui import components as c
+from livestocks.ui import suggestions as s
 from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
@@ -48,10 +49,10 @@ class T(ui.element):
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 0}
 
 
-def register(service: ForecastService, settings: Settings) -> None:
-    """Define the dashboard and detail pages and bind them to the forecast service.
-    Pages read the service on a timer and refresh only when something changed.
-    Add, remove and retry actions go through the service, which wakes the updater.
+def register(service: ForecastService, suggestions: SuggestionService, settings: Settings) -> None:
+    """Define the dashboard, detail and suggestions pages and bind them to the services.
+    Pages read the services on a timer and refresh only when something changed.
+    Add, remove and retry actions go through the forecast service, which wakes the updater.
     """
 
     def tv_url(r: TrackedTicker) -> str:
@@ -108,6 +109,10 @@ def register(service: ForecastService, settings: Settings) -> None:
                     .on("keydown.enter", add)
                 )
                 T("button").classes("btn").on("click", add).text = "Add"
+            if settings.ui_suggestions:
+                T("button").classes("btn ghost").on(
+                    "click", lambda: ui.navigate.to("/suggestions")
+                ).text = "Suggestions"
             with T("div").classes("status").props('aria-live="polite"'):
                 dot = T("span").classes("dot")
                 status = ui.label()
@@ -149,10 +154,18 @@ def register(service: ForecastService, settings: Settings) -> None:
     async def index() -> None:
         state = new_state()
 
+        async def latest_report() -> Any:
+            if not settings.ui_suggestions:
+                return None
+            reports = await suggestions.recent(1)
+            return reports[0] if reports else None
+
         async def sig() -> tuple[Any, ...]:
             rows = await service.list_tickers()
+            report = await latest_report()
             return (
                 tuple((r.key, r.status, r.fetched_at, r.last_error, r.fail_count) for r in rows),
+                (report.date, report.received_at) if report else None,
                 tuple(sorted(service.fetching())),
                 state.sort_key,
                 state.sort_dir,
@@ -169,6 +182,12 @@ def register(service: ForecastService, settings: Settings) -> None:
             with T("div").classes("page-title"):
                 T("h1").text = "Forecast dashboard"
                 T("span").classes("sub").text = "Analyst price targets vs. current price"
+            report = await latest_report()
+            if report:
+                ui.html(
+                    s.dashboard_card(s.parse_report(report), report.date, report.received_at),
+                    sanitize=False,
+                )
             if not rows:
                 ui.html(c.empty_state(), sanitize=False)
                 return
@@ -462,6 +481,67 @@ def register(service: ForecastService, settings: Settings) -> None:
                 await body.refresh()
 
         ui.timer(3.0, maybe_refresh)
+
+    # ---- suggestions ----
+    @ui.page("/suggestions")
+    async def suggestions_page() -> None:
+        state = new_state()
+        last: dict[str, Any] = {"sig": None}
+
+        def sig_of(reports: list[Any]) -> tuple[Any, ...]:
+            return tuple((r.date, r.received_at) for r in reports)
+
+        @ui.refreshable
+        async def body() -> None:
+            reports = await suggestions.recent(14) if settings.ui_suggestions else []
+            last["sig"] = sig_of(reports)
+            with T("div").classes("crumb"):
+                T("button").on("click", lambda: ui.navigate.to("/")).text = "← Dashboard"
+                T("span").text = "/"
+                T("span").text = "Suggestions"
+            with T("div").classes("page-title"):
+                T("h1").text = "Daily suggestions"
+                T("span").classes("sub").text = "Pre-market brief from the scheduled Claude routine"
+            if not reports:
+                with T("section").classes("card empty"):
+                    T("h3").text = "No suggestions yet"
+                    T("p").text = (
+                        "Suggestions are turned off for this server."
+                        if not settings.ui_suggestions
+                        else "The routine delivers a report on weekday mornings. It will appear here."
+                    )
+                return
+            chosen = next((r for r in reports if r.date == state.day), reports[0])
+            data = s.parse_report(chosen)
+            with T("section").classes("card").props('aria-label="Suggestions"'):
+                with T("div").classes("card-head"):
+                    T("h2").text = s.day_label(chosen.date)
+                    with T("div").classes("seg").props('role="group" aria-label="Trading date"'):
+                        for r in reports:
+                            b = T("button").on("click", partial(set_day, r.date))
+                            b.props(
+                                f'aria-pressed="{str(r.date == chosen.date).lower()}"'
+                            ).text = s.day_label(r.date)
+                ui.html(s.report_head(data, chosen.received_at), sanitize=False)
+                ui.html(s.suggestion_table(s.items_of(data)), sanitize=False)
+                with T("div").classes("card-body"):
+                    ui.html(s.disclaimer(data), sanitize=False)
+
+        async def set_day(day: str) -> None:
+            state.day = day
+            await body.refresh()
+
+        await shell(state, body.refresh)
+        with T("div").classes("wrap"), T("main"):
+            await body()
+        footer()
+
+        async def maybe_refresh() -> None:
+            reports = await suggestions.recent(14) if settings.ui_suggestions else []
+            if sig_of(reports) != last["sig"]:
+                await body.refresh()
+
+        ui.timer(15.0, maybe_refresh)
 
     def footer() -> None:
         ui.html(

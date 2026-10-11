@@ -9,3 +9,5 @@
 ::: livestocks.ui.models
 
 ::: livestocks.ui.errors
+
+::: livestocks.ui.suggestions

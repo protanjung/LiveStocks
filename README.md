@@ -34,7 +34,8 @@ unknown ticker, `422` malformed ticker, `502` upstream failure, `504` first craw
 The scheduled Claude routine "Daily IDX Stock Suggestions" delivers its JSON report with
 `POST /api/v1/suggestions`; read it back with `GET /api/v1/suggestions/latest`, `/suggestions/{date}` or
 `/suggestions` (history). All of them use `Authorization: Bearer $LIVESTOCKS_API_TOKEN`; without that variable
-delivery is disabled. See the API page of the documentation.
+delivery is disabled. The newest report also shows on the dashboard and at `/suggestions`; the web UI has no login,
+so set `LIVESTOCKS_UI_SUGGESTIONS=false` on a public host. See the API page of the documentation.
 
 ## Configuration
 

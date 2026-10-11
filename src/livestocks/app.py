@@ -46,7 +46,7 @@ def create_app(settings: Settings = default_settings) -> None:
 
     app.on_startup(startup)
     app.on_shutdown(shutdown)
-    register(service, settings)
+    register(service, suggestions, settings)
     app.include_router(build_router(service), prefix="/api/v1")
     app.include_router(build_suggestions_router(suggestions, settings), prefix="/api/v1")
     register_error_handlers(app)

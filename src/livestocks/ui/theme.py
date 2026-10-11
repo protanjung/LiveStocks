@@ -228,3 +228,20 @@ EXTRA_CSS_3 = r"""
 @media (max-width: 900px) { .chartcard .chartbody > .nicegui-echart { min-height: 340px !important; } }
 """
 CSS = CSS + EXTRA_CSS_3
+
+EXTRA_CSS_4 = r"""
+.fine { font-size: 12px; }
+.sugtable { min-width: 720px; }
+.sugtable tbody tr { cursor: default; }
+.sugtable tbody tr:hover { background: transparent; }
+.sugtable tbody tr:not(.why) td { border-bottom: 0; padding-bottom: 4px; }
+.sugtable .why td { padding-top: 0; white-space: normal; font-size: 12px; }
+.sug-head { display: grid; gap: 8px; }
+.sug-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.sug-chips:empty { display: none; }
+.sug-summary { margin: 0; max-width: 90ch; }
+.sug-moves { display: grid; gap: 8px; margin-top: 10px; }
+.sug-move { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn.fine { padding: 6px 10px; }
+"""
+CSS = CSS + EXTRA_CSS_4

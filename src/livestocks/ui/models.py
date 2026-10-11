@@ -19,3 +19,4 @@ class PageState:
     range: str = "1Y"
     eps_period: str = "Annual"
     rev_period: str = "Annual"
+    day: str | None = None

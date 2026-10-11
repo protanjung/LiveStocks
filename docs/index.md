@@ -7,6 +7,9 @@ LiveStocks tracks the tickers you care about and keeps their analyst forecasts f
   forecast cone, the analyst consensus gauge and EPS and revenue charts;
 - an **HTTP endpoint** that takes a ticker, starts tracking it if it is new, and returns its forecast as JSON.
 
+It can also receive the daily stock suggestions of a scheduled Claude routine. They show on the dashboard and on the
+/suggestions page, and are served by the [suggestion endpoints](api.md#stock-suggestions).
+
 The tracked list starts empty. A ticker is added from the dashboard or by asking the API for it, and from then on
 the crawler refreshes it every six hours and keeps the history in SQLite.
 

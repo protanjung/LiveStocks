@@ -18,6 +18,7 @@ file in the working directory. The defaults suit a local single-user run. Durati
 | `LIVESTOCKS_LOG_JSON` | `false` | Write one JSON object per log line, for log collectors. |
 | `LIVESTOCKS_HOST` | `127.0.0.1` | Address to listen on. Use `0.0.0.0` to accept other devices. |
 | `LIVESTOCKS_PORT` | `8080` | Port to listen on. |
+| `LIVESTOCKS_UI_SUGGESTIONS` | `true` | Show the daily suggestions (your holdings and lot counts) on the dashboard and at `/suggestions`. The web UI has no login, so set `false` on a public host. |
 | `LIVESTOCKS_API_TOKEN` | unset | Bearer token of the [suggestion endpoints](api.md#stock-suggestions). Unset: delivering reports is disabled and reading is open. |
 
 NiceGUI keeps per-visitor preferences (such as the theme) in a storage folder. It defaults to `.nicegui` and is moved
