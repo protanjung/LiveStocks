@@ -243,5 +243,26 @@ EXTRA_CSS_4 = r"""
 .sug-moves { display: grid; gap: 8px; margin-top: 10px; }
 .sug-move { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .btn.fine { padding: 6px 10px; }
+.sug-dash .sug-head { gap: 12px; }
+.sug-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.sug-card { background: var(--surface-2); border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.sug-card.buy { border-left-color: var(--pos); } .sug-card.sell { border-left-color: var(--neg); }
+.sug-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.sug-card .tk b { font-size: 16px; }
+.sug-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.sug-badges .chip { font-size: 11px; background: var(--track); color: var(--muted); }
+.sug-badges .chip.warn { background: var(--warn-soft); color: var(--warn); }
+.sug-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.sug-m { background: var(--surface); padding: 8px 10px; display: grid; gap: 2px; align-content: start; min-width: 0; }
+.sug-m span { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.sug-m b { font-size: 14px; font-weight: 500; }
+.sug-m small { font-size: 11px; font-family: var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.sug-m.pos b { color: var(--pos); } .sug-m.neg b, .sug-m.neg small { color: var(--neg); }
+.sug-why { margin: 0; font-size: 13px; line-height: 1.5; }
+.sug-hold { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.sug-hold summary { cursor: pointer; display: flex; align-items: center; gap: 10px; }
+.sug-hold ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.sug-hold li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; font-size: 12px; }
+@media (max-width: 520px) { .sug-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 """
 CSS = CSS + EXTRA_CSS_4

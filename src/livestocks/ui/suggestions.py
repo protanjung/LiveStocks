@@ -6,7 +6,7 @@ No function in this module performs I/O or touches NiceGUI.
 import json
 from datetime import UTC, datetime, timedelta
 from html import escape
-from typing import Any
+from typing import Any, TypeGuard
 
 from livestocks.domain import SuggestionReport
 from livestocks.ui.components import ago, price_fmt
@@ -220,36 +220,118 @@ def disclaimer(data: dict[str, Any]) -> str:
     return f'<p class="muted fine" style="margin:0">{escape(text)}</p>'
 
 
+def _num(v: Any) -> TypeGuard[int | float]:
+    return isinstance(v, int | float) and not isinstance(v, bool)
+
+
+def _metric(label: str, value: str, note: str = "", tone: str = "") -> str:
+    cls = f"sug-m {tone}".strip()
+    note_html = f"<small>{note}</small>" if note else ""
+    return f'<div class="{cls}"><span>{label}</span><b class="num">{value}</b>{note_html}</div>'
+
+
+def _entry_of(row: dict[str, Any]) -> dict[str, Any]:
+    entry = row.get("entry")
+    return entry if isinstance(entry, dict) else {}
+
+
+def _cost(row: dict[str, Any]) -> str:
+    """Estimated order value in rupiah: lots x 100 shares x entry price. Empty when unknown."""
+    entry, lots = _entry_of(row), row.get("lots")
+    price = entry.get("price")
+    if not (_num(price) and isinstance(lots, int) and lots > 0):
+        return ""
+    return f"≈ Rp {price * lots * 100:,.0f}"
+
+
+def _move_card(row: dict[str, Any]) -> str:
+    action = str(row.get("action", ""))
+    tone = TONES.get(action, "")
+    ticker = escape(str(row.get("ticker", "?")))
+    name = escape(str(row.get("name", "")))
+    lots = row.get("lots")
+    entry = _entry_of(row)
+    zone = (
+        f"{_price(entry.get('low'))} – {_price(entry.get('high'))}"
+        if entry.get("low") or entry.get("high")
+        else ""
+    )
+    stop_pct = row.get("stop_pct")
+    stop_note = f"{'−' if stop_pct <= 0 else '+'}{abs(stop_pct):.1f}%" if _num(stop_pct) else ""
+    rr = row.get("rr")
+    weight = row.get("post_trade_weight_pct")
+    badges = (
+        f'<span class="chip">{"held" if row.get("held") else "new idea"}</span>'
+        + ("" if row.get("verified") else '<span class="chip warn">unverified</span>')
+        + (f'<span class="chip">weight after {weight:.1f}%</span>' if _num(weight) else "")
+    )
+    metrics = "".join(
+        (
+            _metric("Lots", str(lots) if isinstance(lots, int) else "—", _cost(row)),
+            _metric("Entry", _price(entry.get("price")), zone),
+            _metric("Stop", _price(row.get("stop")), stop_note, "neg"),
+            _metric("TP1", _price(row.get("tp1")), "", "pos"),
+            _metric("TP2", _price(row.get("tp2")), "", "pos"),
+            _metric("R : R", f"1 : {rr:.1f}" if _num(rr) else "—"),
+        )
+    )
+    return (
+        f'<article class="sug-card {tone}">'
+        f'<header><div class="tk"><div><b>{ticker}</b><span class="nm">{name}</span></div></div>'
+        f"{action_pill(action)}</header>"
+        f'<div class="sug-badges">{badges}</div>'
+        f'<div class="sug-metrics">{metrics}</div>'
+        f'<p class="sug-why">{escape(str(row.get("reason", "")))}</p>'
+        "</article>"
+    )
+
+
+def _hold_list(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return ""
+    lines = "".join(
+        f"<li><b>{escape(str(r.get('ticker', '?')))}</b>"
+        f'<span class="muted">{escape(str(r.get("reason", "")))}</span></li>'
+        for r in rows
+    )
+    plural = "" if len(rows) == 1 else "s"
+    return (
+        f'<details class="sug-hold"><summary>{action_pill("HOLD")}'
+        f'<span class="muted">{len(rows)} stock{plural} to keep as is</span>'
+        f"</summary><ul>{lines}</ul></details>"
+    )
+
+
 def dashboard_card(
     data: dict[str, Any], date: str, received_at: int, now: int | None = None
 ) -> str:
-    """Return the compact card shown on the dashboard for the newest report.
-    It lists the BUY and SELL rows with their lots and links to the full page.
+    """Return the detailed card shown on the dashboard for the newest report.
+    It has the market summary, counts, a card per BUY and SELL row, a HOLD list and the disclaimer.
     now overrides the clock for tests.
     """
     items = items_of(data)
     moves = [r for r in items if r.get("action") in ("BUY", "SELL")]
-    lines = "".join(
-        f'<div class="sug-move">{action_pill(str(r["action"]))}'
-        f"<b>{escape(str(r.get('ticker', '?')))}</b>"
-        f'<span class="muted num">{r.get("lots", 0)} lots'
-        + (
-            f" at {_price((r.get('entry') or {}).get('price'))}"
-            if isinstance(r.get("entry"), dict)
-            else ""
-        )
-        + "</span></div>"
-        for r in moves
-    )
-    if not lines:
-        lines = '<div class="muted">Nothing to buy or sell. Hold everything.</div>'
+    holds = [r for r in items if r.get("action") == "HOLD"]
+    cards = "".join(_move_card(r) for r in moves)
+    if not cards:
+        cards = '<div class="muted">Nothing to buy or sell. Hold everything.</div>'
+    market = data.get("market")
+    market = market if isinstance(market, dict) else {}
+    ihsg = market.get("ihsg_last")
+    ihsg_html = f'<span class="chip">IHSG {ihsg:,.2f}</span>' if _num(ihsg) else ""
+    summary = escape(str(market.get("summary", "")))
+    summary_html = f'<p class="sug-summary">{summary}</p>' if summary else ""
     return (
-        '<section class="card" aria-label="Daily suggestions">'
+        '<section class="card sug-dash" aria-label="Daily suggestions">'
         '<div class="card-head"><h2>Daily suggestions</h2>'
         f'<span class="sub">{day_label(date)} · stored {ago(received_at, now)}</span>'
         '<a class="btn ghost fine" style="text-decoration:none" href="/suggestions">All suggestions →</a></div>'
-        '<div class="card-body">'
-        f'<div class="sug-chips">{count_chips(action_counts(items))}</div>'
-        f'<div class="sug-moves">{lines}</div>'
+        '<div class="card-body sug-head">'
+        f'<div class="sug-chips">{ihsg_html}{count_chips(action_counts(items))}</div>'
+        f"{summary_html}"
+        f'<div class="muted fine">Generated {when(data.get("generated_at"))}</div>'
+        f'<div class="sug-grid">{cards}</div>'
+        f"{_hold_list(holds)}"
+        f"{disclaimer(data)}"
         "</div></section>"
     )

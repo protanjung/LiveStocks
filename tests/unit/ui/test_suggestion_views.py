@@ -138,13 +138,39 @@ class TestCards:
         assert "1 BUY" in html
         assert "stored 1 h ago" in html
 
-    def test_dashboard_card_lists_only_buys_and_sells_and_links_to_the_page(self):
+    def test_dashboard_card_has_a_detailed_card_per_move_and_links_to_the_page(self):
         html = dashboard_card(DATA, "2026-10-12", received_at=1000, now=1000)
 
-        assert "BBRI" in html
-        assert "ADRO" in html
-        assert "TLKM" not in html
+        for text in (
+            "BBRI",
+            "ADRO",
+            "IHSG 6,093.75",
+            "3,070 – 3,100",
+            "3,850",
+            "2,990",
+            "−3.2%",
+            "1 : 5.1",
+            "weight after 12.4%",
+            "Below consensus",
+            "≈ Rp 927,000",
+            "Informational only.",
+        ):
+            assert text in html
         assert 'href="/suggestions"' in html
+
+    def test_dashboard_card_folds_holds_into_a_list_and_flags_unverified_moves(self):
+        data = {"suggestions": [row("TLKM", "HOLD", reason="Wait."), row(verified=False)]}
+
+        html = dashboard_card(data, "2026-10-12", 1, now=1)
+
+        assert "<details" in html
+        assert "TLKM" in html
+        assert "unverified" in html
+
+    def test_dashboard_card_escapes_report_text(self):
+        html = dashboard_card({"suggestions": [row(reason="<b>x</b>")]}, "2026-10-12", 1, now=1)
+
+        assert "<b>x</b>" not in html
 
     def test_dashboard_card_without_moves_says_to_hold(self):
         html = dashboard_card({"suggestions": [row("TLKM", "HOLD")]}, "2026-10-12", 1, now=1)
