@@ -231,11 +231,6 @@ CSS = CSS + EXTRA_CSS_3
 
 EXTRA_CSS_4 = r"""
 .fine { font-size: 12px; }
-.sugtable { min-width: 720px; }
-.sugtable tbody tr { cursor: default; }
-.sugtable tbody tr:hover { background: transparent; }
-.sugtable tbody tr:not(.why) td { border-bottom: 0; padding-bottom: 4px; }
-.sugtable .why td { padding-top: 0; white-space: normal; font-size: 12px; }
 .sug-head { display: grid; gap: 8px; }
 .sug-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .sug-chips:empty { display: none; }
@@ -263,6 +258,19 @@ EXTRA_CSS_4 = r"""
 .sug-hold summary { cursor: pointer; display: flex; align-items: center; gap: 10px; }
 .sug-hold ul { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
 .sug-hold li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; font-size: 12px; }
+.sug-spark svg { display: block; width: 100%; height: auto; overflow: visible; }
+.sug-spark .ln { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.sug-spark .area { fill: currentColor; opacity: .12; stroke: none; }
+.sug-spark .end { fill: currentColor; }
+.sug-spark.pos { color: var(--pos); } .sug-spark.neg { color: var(--neg); }
+.sug-spark .lv { stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
+.sug-spark .lv.entry, .sug-spark .lvl.entry { stroke: var(--accent); color: var(--accent); }
+.sug-spark .lv.stop, .sug-spark .lvl.stop { stroke: var(--neg); color: var(--neg); }
+.sug-spark .lv.tp1, .sug-spark .lvl.tp1 { stroke: var(--pos); color: var(--pos); }
+.sug-spark .cap { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+.sug-spark .cap .chg { margin: 0 0 0 auto; }
+.sug-spark .lvl::before { content: ""; display: inline-block; width: 10px; border-top: 1px dashed currentColor; margin-right: 4px; vertical-align: middle; }
+.sug-spark.none { padding: 14px 0; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
 @media (max-width: 520px) { .sug-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 """
 CSS = CSS + EXTRA_CSS_4

@@ -4,6 +4,7 @@ No function in this module performs I/O or touches NiceGUI.
 """
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import Any, TypeGuard
@@ -116,76 +117,6 @@ def _price(v: Any) -> str:
     return price_fmt(float(v)) if isinstance(v, int | float) and not isinstance(v, bool) else "—"
 
 
-def _entry(entry: Any) -> str:
-    if not isinstance(entry, dict):
-        return '<span class="muted">—</span>'
-    price, low, high = entry.get("price"), entry.get("low"), entry.get("high")
-    if price is None and low is None and high is None:
-        return '<span class="muted">—</span>'
-    zone = f'<div class="muted fine">{_price(low)} – {_price(high)}</div>' if low or high else ""
-    return f'<div class="num">{_price(price)}</div>{zone}'
-
-
-def _stop(row: dict[str, Any]) -> str:
-    stop, stop_pct = row.get("stop"), row.get("stop_pct")
-    if stop is None:
-        return '<span class="muted">—</span>'
-    pct = (
-        f'<div class="chg neg">{"−" if stop_pct <= 0 else "+"}{abs(stop_pct):.1f}%</div>'
-        if isinstance(stop_pct, int | float)
-        else ""
-    )
-    return f'<div class="num">{_price(stop)}</div>{pct}'
-
-
-def _row(row: dict[str, Any]) -> str:
-    action = str(row.get("action", ""))
-    lots = row.get("lots")
-    ticker = escape(str(row.get("ticker", "?")))
-    name = escape(str(row.get("name", "")))
-    held = "held" if row.get("held") else "new idea"
-    flag = "" if row.get("verified") else '<span class="chip warn">unverified</span>'
-    rr = row.get("rr")
-    rr_html = f"1 : {rr:.1f}" if isinstance(rr, int | float) and not isinstance(rr, bool) else "—"
-    weight = row.get("post_trade_weight_pct")
-    weight_html = (
-        f" · weight after {weight:.1f}%"
-        if isinstance(weight, int | float) and not isinstance(weight, bool)
-        else ""
-    )
-    why = escape(str(row.get("reason", "")))
-    return (
-        "<tr>"
-        f'<td><div class="tk"><div><b>{ticker}</b><span class="nm">{name}</span></div></div></td>'
-        f"<td>{action_pill(action)}</td>"
-        f'<td class="r num">{lots if action != "HOLD" and isinstance(lots, int) else "—"}</td>'
-        f'<td class="r">{_entry(row.get("entry"))}</td>'
-        f'<td class="r num">{_price(row.get("tp1"))}<div class="muted fine">{_price(row.get("tp2"))}</div></td>'
-        f'<td class="r">{_stop(row)}</td>'
-        f'<td class="r num">{rr_html}</td>'
-        "</tr>"
-        f'<tr class="why"><td colspan="7"><span class="muted">{held}{weight_html}</span> {flag} {why}</td></tr>'
-    )
-
-
-def suggestion_table(items: list[dict[str, Any]]) -> str:
-    """Return the table of stock rows: action, lots, entry, targets, stop and risk to reward.
-    Each row is followed by a line with the reason and whether the levels are verified.
-    An empty list gives a short notice instead of a table.
-    """
-    if not items:
-        return '<div class="card-body muted">This report has no stock rows.</div>'
-    head = (
-        "<thead><tr><th>Ticker</th><th>Action</th>"
-        '<th class="r">Lots</th><th class="r">Entry</th>'
-        '<th class="r">TP1 / TP2</th><th class="r">Stop</th><th class="r">R:R</th></tr></thead>'
-    )
-    body = "".join(_row(r) for r in items)
-    return (
-        f'<div class="tablewrap"><table class="sugtable">{head}<tbody>{body}</tbody></table></div>'
-    )
-
-
 def report_head(data: dict[str, Any], received_at: int, now: int | None = None) -> str:
     """Return the summary of one report: date, IHSG, market line and action counts.
     Also says when the brief was generated and how long ago the app stored it.
@@ -244,7 +175,54 @@ def _cost(row: dict[str, Any]) -> str:
     return f"≈ Rp {price * lots * 100:,.0f}"
 
 
-def _move_card(row: dict[str, Any]) -> str:
+SPARK_W, SPARK_H, SPARK_PAD = 240, 64, 4
+LEVEL_NAMES = {"entry": "Entry", "stop": "Stop", "tp1": "TP1"}
+
+
+def sparkline(closes: Sequence[float], levels: dict[str, Any]) -> str:
+    """Return a small inline SVG of closing prices with dashed entry, stop and TP1 lines.
+    A level is drawn only when it lies within one price range of the closes, so a far-off level
+    does not flatten the line. Fewer than two closes give a short notice instead.
+    """
+    if len(closes) < 2:
+        return '<div class="sug-spark none muted fine">No price history yet</div>'
+    lo, hi = min(closes), max(closes)
+    span = (hi - lo) or 1.0
+    shown = {k: float(v) for k, v in levels.items() if _num(v) and lo - span <= v <= hi + span}
+    lo, hi = min([lo, *shown.values()]), max([hi, *shown.values()])
+    span = (hi - lo) or 1.0
+
+    def y(v: float) -> float:
+        return SPARK_PAD + (hi - v) / span * (SPARK_H - 2 * SPARK_PAD)
+
+    step = SPARK_W / (len(closes) - 1)
+    points = " ".join(f"{i * step:.1f},{y(c):.1f}" for i, c in enumerate(closes))
+    lines = "".join(
+        f'<line class="lv {k}" x1="0" x2="{SPARK_W}" y1="{y(v):.1f}" y2="{y(v):.1f}"/>'
+        for k, v in shown.items()
+    )
+    change = closes[-1] / closes[0] - 1 if closes[0] else 0.0
+    tone = "pos" if change >= 0 else "neg"
+    legend = "".join(f'<span class="lvl {k}">{LEVEL_NAMES[k]}</span>' for k in shown)
+    return (
+        f'<div class="sug-spark {tone}">'
+        f'<svg viewBox="0 0 {SPARK_W} {SPARK_H}" role="img" '
+        f'aria-label="Price over the last {len(closes)} sessions, {change * 100:+.1f}%">'
+        f'<polygon class="area" points="0,{SPARK_H} {points} {SPARK_W},{SPARK_H}"/>'
+        f"{lines}"
+        f'<polyline class="ln" points="{points}"/>'
+        f'<circle class="end" cx="{SPARK_W}" cy="{y(closes[-1]):.1f}" r="3"/></svg>'
+        f'<div class="cap muted fine"><span>{len(closes)} sessions</span>{legend}'
+        f'<span class="chg {tone}">{"−" if change < 0 else "+"}{abs(change) * 100:.1f}%</span></div>'
+        "</div>"
+    )
+
+
+def stock_card(row: dict[str, Any], closes: Sequence[float] | None = None) -> str:
+    """Return the card of one stock row: action, levels, risk to reward and the reason.
+    closes adds a price sparkline marked with the entry, stop and TP1 levels.
+    None leaves the chart out; an empty list shows that there is no history yet.
+    """
     action = str(row.get("action", ""))
     tone = TONES.get(action, "")
     ticker = escape(str(row.get("ticker", "?")))
@@ -265,14 +243,29 @@ def _move_card(row: dict[str, Any]) -> str:
         + ("" if row.get("verified") else '<span class="chip warn">unverified</span>')
         + (f'<span class="chip">weight after {weight:.1f}%</span>' if _num(weight) else "")
     )
-    metrics = "".join(
-        (
-            _metric("Lots", str(lots) if isinstance(lots, int) else "—", _cost(row)),
-            _metric("Entry", _price(entry.get("price")), zone),
-            _metric("Stop", _price(row.get("stop")), stop_note, "neg"),
-            _metric("TP1", _price(row.get("tp1")), "", "pos"),
-            _metric("TP2", _price(row.get("tp2")), "", "pos"),
-            _metric("R : R", f"1 : {rr:.1f}" if _num(rr) else "—"),
+    has_levels = any(_num(v) for v in (entry.get("price"), row.get("stop"), row.get("tp1")))
+    show_lots = action != "HOLD" and isinstance(lots, int)
+    metrics = (
+        '<div class="sug-metrics">'
+        + "".join(
+            (
+                _metric("Lots", str(lots) if show_lots else "—", _cost(row)),
+                _metric("Entry", _price(entry.get("price")), zone),
+                _metric("Stop", _price(row.get("stop")), stop_note, "neg"),
+                _metric("TP1", _price(row.get("tp1")), "", "pos"),
+                _metric("TP2", _price(row.get("tp2")), "", "pos"),
+                _metric("R : R", f"1 : {rr:.1f}" if _num(rr) else "—"),
+            )
+        )
+        + "</div>"
+        if has_levels
+        else ""
+    )
+    chart = (
+        ""
+        if closes is None
+        else sparkline(
+            closes, {"entry": entry.get("price"), "stop": row.get("stop"), "tp1": row.get("tp1")}
         )
     )
     return (
@@ -280,10 +273,21 @@ def _move_card(row: dict[str, Any]) -> str:
         f'<header><div class="tk"><div><b>{ticker}</b><span class="nm">{name}</span></div></div>'
         f"{action_pill(action)}</header>"
         f'<div class="sug-badges">{badges}</div>'
-        f'<div class="sug-metrics">{metrics}</div>'
+        f"{chart}{metrics}"
         f'<p class="sug-why">{escape(str(row.get("reason", "")))}</p>'
         "</article>"
     )
+
+
+def suggestion_cards(items: list[dict[str, Any]], history: dict[str, list[float]]) -> str:
+    """Return the grid of stock cards, each with the price sparkline from history.
+    history maps a ticker to its closing prices, oldest first; a missing ticker has no history yet.
+    An empty list gives a short notice instead of a grid.
+    """
+    if not items:
+        return '<div class="card-body muted">This report has no stock rows.</div>'
+    cards = "".join(stock_card(r, history.get(str(r.get("ticker")), [])) for r in items)
+    return f'<div class="card-body"><div class="sug-grid">{cards}</div></div>'
 
 
 def _hold_list(rows: list[dict[str, Any]]) -> str:
@@ -312,7 +316,7 @@ def dashboard_card(
     items = items_of(data)
     moves = [r for r in items if r.get("action") in ("BUY", "SELL")]
     holds = [r for r in items if r.get("action") == "HOLD"]
-    cards = "".join(_move_card(r) for r in moves)
+    cards = "".join(stock_card(r) for r in moves)
     if not cards:
         cards = '<div class="muted">Nothing to buy or sell. Hold everything.</div>'
     market = data.get("market")

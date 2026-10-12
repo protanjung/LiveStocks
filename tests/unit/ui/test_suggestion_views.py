@@ -11,7 +11,9 @@ from livestocks.ui.suggestions import (
     items_of,
     parse_report,
     report_head,
-    suggestion_table,
+    sparkline,
+    stock_card,
+    suggestion_cards,
     when,
 )
 
@@ -94,9 +96,9 @@ class TestFormatting:
         assert 'class="rate hold"' in action_pill("HOLD")
 
 
-class TestTable:
-    def test_levels_and_reason_are_shown(self):
-        html = suggestion_table(items_of(DATA))
+class TestSuggestionCards:
+    def test_cards_show_levels_reason_and_a_chart_per_ticker(self):
+        html = suggestion_cards(items_of(DATA), {"BBRI": [3000.0, 3050.0, 3090.0]})
 
         for text in (
             "BBRI",
@@ -107,29 +109,52 @@ class TestTable:
             "−3.2%",
             "1 : 5.1",
             "Below consensus",
+            "<svg",
+            "3 sessions",
         ):
             assert text in html
+        assert html.count("No price history yet") == 2
 
-    def test_hold_rows_show_no_lots_and_unverified_rows_are_flagged(self):
-        hold = row("TLKM", "HOLD", verified=False, entry={"low": None, "high": None, "price": None})
+    def test_hold_cards_show_no_lots_and_no_level_grid_without_levels(self):
+        hold = row("TLKM", "HOLD", verified=False, entry={}, tp1=None, tp2=None, stop=None)
 
-        html = suggestion_table([hold])
+        html = stock_card(hold)
 
         assert "unverified" in html
-        assert '<td class="r num">—</td>' in html
+        assert "sug-metrics" not in html
+        assert "<svg" not in html
 
     def test_text_from_the_report_is_escaped(self):
-        html = suggestion_table([row(reason="<script>alert(1)</script>", name="A & B")])
+        html = suggestion_cards([row(reason="<script>alert(1)</script>", name="A & B")], {})
 
         assert "<script>" not in html
         assert "&lt;script&gt;" in html
         assert "A &amp; B" in html
 
     def test_empty_report_says_so(self):
-        assert "no stock rows" in suggestion_table([])
+        assert "no stock rows" in suggestion_cards([], {})
 
 
-class TestCards:
+class TestSparkline:
+    def test_rising_prices_are_green_and_falling_ones_red(self):
+        assert 'class="sug-spark pos"' in sparkline([1.0, 2.0], {})
+        assert 'class="sug-spark neg"' in sparkline([2.0, 1.0], {})
+
+    def test_levels_near_the_prices_are_drawn_and_far_ones_are_left_out(self):
+        html = sparkline([100.0, 110.0], {"entry": 105, "stop": 95, "tp1": 5000})
+
+        assert 'class="lv entry"' in html
+        assert 'class="lv stop"' in html
+        assert "lv tp1" not in html
+
+    def test_without_two_closes_it_says_there_is_no_history(self):
+        assert "No price history yet" in sparkline([100.0], {})
+
+    def test_a_flat_line_does_not_divide_by_zero(self):
+        assert "<polyline" in sparkline([5.0, 5.0, 5.0], {"entry": 5})
+
+
+class TestHeadAndDashboard:
     def test_head_shows_ihsg_summary_and_counts(self):
         html = report_head(DATA, received_at=1000, now=1000 + 3600)
 

@@ -3,6 +3,7 @@ register() defines both pages on the shared NiceGUI app.
 Rendering is delegated to the pure builders in components, chart and financials.
 """
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from functools import partial
@@ -46,6 +47,7 @@ class T(ui.element):
         self._text = value
 
 
+SPARK_DAYS = 90
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 0}
 
 
@@ -491,6 +493,15 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
         def sig_of(reports: list[Any]) -> tuple[Any, ...]:
             return tuple((r.date, r.received_at) for r in reports)
 
+        async def closes_of(items: list[dict[str, Any]]) -> dict[str, list[float]]:
+            exchange = settings.default_exchange.upper()
+            since = int(time.time()) - SPARK_DAYS * 86400
+            tickers = sorted({str(r["ticker"]) for r in items if r.get("ticker")})
+            bars = await asyncio.gather(
+                *(service.price_history(TickerId(exchange, t), since) for t in tickers)
+            )
+            return {t: [b.close for b in bs] for t, bs in zip(tickers, bars, strict=True)}
+
         @ui.refreshable
         async def body() -> None:
             reports = await suggestions.recent(14) if settings.ui_suggestions else []
@@ -523,7 +534,8 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                                 f'aria-pressed="{str(r.date == chosen.date).lower()}"'
                             ).text = s.day_label(r.date)
                 ui.html(s.report_head(data, chosen.received_at), sanitize=False)
-                ui.html(s.suggestion_table(s.items_of(data)), sanitize=False)
+                items = s.items_of(data)
+                ui.html(s.suggestion_cards(items, await closes_of(items)), sanitize=False)
                 with T("div").classes("card-body"):
                     ui.html(s.disclaimer(data), sanitize=False)
 
