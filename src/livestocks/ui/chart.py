@@ -21,6 +21,7 @@ COLORS = {
         "surface": "#131a28",
         "pos": "#34c38f",
         "neg": "#f0616d",
+        "on_accent": "#0c111b",  # text on a coloured label; dark ink reads better on these
     },
     False: {
         "fg": "#121a2b",
@@ -28,8 +29,9 @@ COLORS = {
         "line": "#dfe4ee",
         "accent": "#2e62d9",
         "surface": "#ffffff",
-        "pos": "#0f8f63",
+        "pos": "#0a7a53",
         "neg": "#c8323f",
+        "on_accent": "#ffffff",
     },
 }
 
@@ -57,7 +59,7 @@ def _pill(label: str, value: float, color: str, col: dict, position: str = "top"
         "rich": {
             "a": {
                 "backgroundColor": color,
-                "color": "#fff",
+                "color": col["on_accent"],
                 "padding": [5, 7],
                 "borderRadius": [4, 0, 0, 4],
                 "fontSize": 11,
@@ -215,6 +217,7 @@ def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: 
 
     return {
         "animation": False,
+        "aria": {"enabled": True},
         "grid": {"left": 8, "right": 14, "top": 28, "bottom": 8, "containLabel": True},
         "tooltip": {
             "trigger": "axis",

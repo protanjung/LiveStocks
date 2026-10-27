@@ -118,6 +118,7 @@ def seasonal_options(bars: Sequence[PriceBar], dark: bool) -> dict:
     )
     return {
         "animation": False,
+        "aria": {"enabled": True},
         "grid": {"left": 8, "right": 12, "top": 16, "bottom": 12, "containLabel": True},
         "tooltip": {
             "trigger": "axis",

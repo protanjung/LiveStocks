@@ -107,6 +107,7 @@ def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dic
         }
     return {
         "animation": False,
+        "aria": {"enabled": True},
         "grid": {"left": 8, "right": 12, "top": 16, "bottom": 36, "containLabel": True},
         "legend": {
             "bottom": 0,
