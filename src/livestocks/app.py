@@ -3,6 +3,8 @@ Settings are read once, the store is opened and the updater and pages are wired.
 Control then passes to NiceGUI's uvicorn server.
 """
 
+from pathlib import Path
+
 from nicegui import app, ui
 from nicegui.ui_run import DocsConfig
 
@@ -31,6 +33,7 @@ def create_app(settings: Settings = default_settings) -> None:
     Startup and shutdown hooks start and stop the updater and close the store.
     Call it once before ui.run(); tests may pass their own Settings.
     """
+    app.add_static_files("/static", Path(__file__).parent / "ui" / "static")
     store = Store(settings.db_path)
     updater = Updater(store, settings)
     service = ForecastService(store, updater, settings)

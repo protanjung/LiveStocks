@@ -1,13 +1,34 @@
 """Design tokens and global CSS ported from the approved dashboard mock.
 Colours are CSS variables, dark by default with a light override class.
-FONTS_HEAD loads IBM Plex and CSS is injected once per page.
+FONTS_HEAD declares the self-hosted IBM Plex faces served from /static/fonts, and CSS is injected once per page.
 """
 
-FONTS_HEAD = """
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
-"""
+FONT_DIR = "/static/fonts"
+FONT_FACES = (
+    ("IBM Plex Sans", "ibm-plex-sans", 400),
+    ("IBM Plex Sans", "ibm-plex-sans", 500),
+    ("IBM Plex Sans", "ibm-plex-sans", 600),
+    ("IBM Plex Mono", "ibm-plex-mono", 400),
+    ("IBM Plex Mono", "ibm-plex-mono", 500),
+    ("IBM Plex Mono", "ibm-plex-mono", 600),
+)
+PRELOAD_FACES = (("ibm-plex-sans", 400), ("ibm-plex-mono", 400))
+
+
+def _font_url(slug: str, weight: int) -> str:
+    return f"{FONT_DIR}/{slug}-latin-{weight}-normal.woff2"
+
+
+_PRELOADS = "".join(
+    f'<link rel="preload" href="{_font_url(slug, weight)}" as="font" type="font/woff2" crossorigin>'
+    for slug, weight in PRELOAD_FACES
+)
+_FACE_RULES = "".join(
+    f'@font-face {{ font-family: "{family}"; font-style: normal; font-weight: {weight}; '
+    f'font-display: swap; src: url("{_font_url(slug, weight)}") format("woff2"); }}'
+    for family, slug, weight in FONT_FACES
+)
+FONTS_HEAD = f"{_PRELOADS}<style>{_FACE_RULES}</style>"
 
 CSS = r"""
 
