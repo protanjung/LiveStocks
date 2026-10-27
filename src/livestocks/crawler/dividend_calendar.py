@@ -32,7 +32,18 @@ COLUMNS = (
     "dividend_payment_date_recent",
     "dividend_amount_recent",
     "dividends_yield_current",
+    "close",
+    "change",
+    "average_volume_30d_calc",
+    "sector",
+    "dividend_payout_ratio_ttm",
+    "dividend_payout_ratio_fy",
+    "continuous_dividend_payout",
+    "continuous_dividend_growth",
+    "cash_dividend_coverage_ratio_ttm",
+    "dividends_yield",
 )
+REQUIRED_COLUMNS = 9  # the dividend dates and amounts; the fundamentals after them are optional
 MARKETS = {
     "IDX": "indonesia",
     "NASDAQ": "america",
@@ -69,11 +80,39 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _cell(values: list[Any], index: int) -> Any:
+    """Return one scanner value, or None when the row is shorter than the column list."""
+    return values[index] if index < len(values) else None
+
+
+def _fundamentals(values: list[Any]) -> dict[str, Any]:
+    """Read the optional price, volume, payout and streak columns of one scanner row.
+    The annual yield is the current yield, or the plain yield when the current one is 0 or missing.
+    The payout ratio is the trailing figure, or the fiscal-year one when that is 0.
+    """
+    now, plain = as_float(_cell(values, 8)), as_float(_cell(values, 18))
+    ttm, fy = as_float(_cell(values, 13)), as_float(_cell(values, 14))
+    return {
+        "yield_pct": now or plain or None,
+        "price": as_float(_cell(values, 9)),
+        "change_pct": as_float(_cell(values, 10)),
+        "avg_volume": as_float(_cell(values, 11)),
+        "sector": _text(_cell(values, 12)),
+        "payout": ttm or fy or None,
+        "streak_years": as_int(_cell(values, 15)),
+        "growth_years": as_int(_cell(values, 16)),
+        "coverage": as_float(_cell(values, 17)),
+    }
+
+
 def _entry(exchange: str, symbol: str, values: list[Any], now: int) -> CalendarEntry | None:
     """Build one calendar row, preferring the announced dividend over the most recent one.
     Returns None when the row has neither an upcoming nor a recent ex-date.
+    The fundamentals come from the optional columns after the dividend dates.
     """
     name = _text(values[1]) or _text(values[0])
+    fund = _fundamentals(values)
+    yield_pct = fund.pop("yield_pct")
     ex_up = as_int(values[2])
     if ex_up is not None and ex_up >= now:
         return CalendarEntry(
@@ -83,8 +122,9 @@ def _entry(exchange: str, symbol: str, values: list[Any], now: int) -> CalendarE
             ex_up,
             as_int(values[3]),
             as_float(values[4]),
-            as_float(values[8]),
+            yield_pct,
             CalendarKind.UPCOMING,
+            **fund,
         )
     ex_rec = as_int(values[5])
     if ex_rec is None:
@@ -92,7 +132,7 @@ def _entry(exchange: str, symbol: str, values: list[Any], now: int) -> CalendarE
     pay_rec = as_int(values[6])
     kind = CalendarKind.PAYING if pay_rec is not None and pay_rec >= now else CalendarKind.RECENT
     return CalendarEntry(
-        exchange, symbol, name, ex_rec, pay_rec, as_float(values[7]), as_float(values[8]), kind
+        exchange, symbol, name, ex_rec, pay_rec, as_float(values[7]), yield_pct, kind, **fund
     )
 
 
@@ -159,7 +199,7 @@ def parse_scan(data: Any, exchange: str, now: int) -> list[CalendarEntry]:
         item = as_dict(raw)
         ref = _text(item.get("s")) if item is not None else None
         values = as_list(item.get("d")) if item is not None else None
-        if ref is None or values is None or len(values) < len(COLUMNS):
+        if ref is None or values is None or len(values) < REQUIRED_COLUMNS:
             continue
         if not ref.startswith(prefix):
             continue

@@ -235,3 +235,69 @@ class TestRecordLookup:
         await dividend_calendar._with_record_dates(entries)
 
         assert peak <= dividend_calendar.RECORD_LOOKUPS
+
+
+class TestFundamentalColumns:
+    def _row(self, **cols):
+        values = [
+            "SIDO",
+            "PT Sido",
+            NOW + 100,
+            NOW + 200,
+            10.0,
+            None,
+            None,
+            None,
+            10.8,
+            316.0,
+            -6.5,
+            26_500_000.0,
+            "Health Tech",
+            76.4,
+            89.5,
+            13,
+            0,
+            1.11,
+            7.4,
+        ]
+        for index, value in cols.items():
+            values[int(index[1:])] = value
+        return {"s": "IDX:SIDO", "d": values}
+
+    def test_price_volume_sector_payout_and_streak_are_read(self):
+        (entry,) = parse_scan(_scan(self._row()), "IDX", NOW)
+
+        assert entry.price == 316.0
+        assert entry.avg_volume == 26_500_000.0
+        assert entry.sector == "Health Tech"
+        assert entry.payout == pytest.approx(76.4)
+        assert entry.streak_years == 13
+        assert entry.coverage == pytest.approx(1.11)
+
+    def test_a_zero_current_yield_falls_back_to_the_plain_yield(self):
+        (entry,) = parse_scan(_scan(self._row(c8=0, c18=7.4)), "IDX", NOW)
+
+        assert entry.yield_pct == pytest.approx(7.4)
+
+    def test_a_zero_ttm_payout_falls_back_to_the_fiscal_year_figure(self):
+        (entry,) = parse_scan(_scan(self._row(c13=0, c14=99.4)), "IDX", NOW)
+
+        assert entry.payout == pytest.approx(99.4)
+
+    def test_both_payouts_zero_means_no_payout_data(self):
+        (entry,) = parse_scan(_scan(self._row(c13=0, c14=0)), "IDX", NOW)
+
+        assert entry.payout is None
+
+    def test_a_short_row_still_parses_without_fundamentals(self):
+        row = _row("OLD", ex_up=NOW + 100, pay_up=NOW + 200, amt_up=10)
+
+        (entry,) = parse_scan(_scan(row), "IDX", NOW)
+
+        assert entry.price is None
+        assert entry.payout is None
+
+    def test_event_yield_follows_from_amount_and_price(self):
+        (entry,) = parse_scan(_scan(self._row()), "IDX", NOW)
+
+        assert entry.event_yield == pytest.approx(10 / 316 * 100)
