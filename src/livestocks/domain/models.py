@@ -117,10 +117,76 @@ class Period:
 
 
 @dataclass(frozen=True, slots=True)
+class DividendPayment:
+    """One past or announced dividend of a ticker, as TradingView lists it.
+    ex_date is the first day without the dividend and pay_date the payout day, both unix seconds.
+    amount is per share in the trading currency and kind is the frequency label, such as Annual.
+    """
+
+    ex_date: int | None
+    pay_date: int | None
+    amount: float | None
+    kind: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Dividend:
+    """The upcoming and most recent dividend of a ticker, with its recent payment history.
+    The next_ fields hold an announced dividend and stay None until one is announced.
+    history lists payments newest first and includes the upcoming one when it exists.
+    """
+
+    next_ex: int | None  # unix seconds
+    next_pay: int | None
+    next_amount: float | None
+    last_ex: int | None
+    last_pay: int | None
+    last_amount: float | None
+    yield_pct: float | None  # current yield in percent
+    history: tuple[DividendPayment, ...]
+
+    def next_event(self, now: int) -> int | None:
+        """Return the earliest date still ahead of now among the next ex-date and the last payout.
+        A payout can still be pending after its ex-date, so both are considered.
+        Returns None when neither date is in the future.
+        """
+        ahead = [t for t in (self.next_ex, self.last_pay) if t is not None and t >= now]
+        return min(ahead, default=None)
+
+
+class CalendarKind(StrEnum):
+    """Which part of the dividend cycle a market calendar row is in.
+    UPCOMING has an announced ex-date still ahead, PAYING has passed its ex-date but not its payout,
+    and RECENT has both dates behind it.
+    """
+
+    UPCOMING = "upcoming"
+    PAYING = "paying"
+    RECENT = "recent"
+
+
+@dataclass(frozen=True, slots=True)
+class CalendarEntry:
+    """One row of the market dividend calendar.
+    Dates are unix seconds and amount is per share in the trading currency.
+    kind says which date the row is grouped under.
+    """
+
+    exchange: str
+    symbol: str
+    name: str | None
+    ex_date: int | None
+    pay_date: int | None
+    amount: float | None
+    yield_pct: float | None
+    kind: CalendarKind
+
+
+@dataclass(frozen=True, slots=True)
 class Extras:
-    """Analyst rating breakdown plus EPS and revenue actuals versus estimates.
+    """Analyst ratings, EPS and revenue actuals versus estimates, and dividends.
     The five counts are analysts per rating, strong buy to strong sell.
-    Each series has an annual (fy) and a quarterly (fq) variant.
+    Each series has an annual (fy) and a quarterly (fq) variant; dividend is None without data.
     """
 
     strong_buy: int | None
@@ -132,6 +198,7 @@ class Extras:
     eps_fq: tuple[Period, ...]
     rev_fy: tuple[Period, ...]
     rev_fq: tuple[Period, ...]
+    dividend: Dividend | None = None
 
     @property
     def rating_counts(self) -> list[tuple[str, int]] | None:

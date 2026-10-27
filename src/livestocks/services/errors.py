@@ -37,3 +37,10 @@ class SuggestionNotFoundError(ServiceError):
     The routine that produces them runs on weekday mornings.
     Asking again after its next run may succeed.
     """
+
+
+class CalendarUnavailableError(ServiceError):
+    """The market dividend calendar could not be fetched and no earlier copy is cached.
+    Usually transient, because the scanner endpoint sometimes fails briefly.
+    Reloading the page after a short wait may succeed.
+    """

@@ -7,13 +7,14 @@ import asyncio
 import json
 import re
 import time
+from itertools import zip_longest
 from typing import Any
 
 import websockets
 
 from livestocks.crawler.errors import UpstreamError
 from livestocks.crawler.json_values import as_dict, as_float, as_int, as_list
-from livestocks.domain import Extras, Period
+from livestocks.domain import Dividend, DividendPayment, Extras, Period
 
 WS_URL = "wss://data.tradingview.com/socket.io/websocket?from=symbols%2F{exchange}-{symbol}%2Fforecast-actuals-and-estimates%2F"
 ORIGIN = "https://www.tradingview.com"
@@ -21,6 +22,7 @@ ANNUAL_KEEP, QUARTER_KEEP = (
     11,
     16,
 )  # periods shown per chart, counting back from the last one with data
+DIVIDEND_KEEP = 12  # past dividends kept, newest first
 
 
 def _frame(method: str, params: list[Any]) -> str:
@@ -107,8 +109,46 @@ def _periods(raw: Any, keep: int) -> tuple[Period, ...]:
     return tuple(out[-keep:])
 
 
+def _dividend(v: dict[str, Any]) -> Dividend | None:
+    """Extract the upcoming and recent dividend and its payment history from raw quote fields.
+    The *_h arrays are index-aligned and newest first, so index 0 matches the upcoming dividend.
+    Returns None when the feed carries no dividend data for the ticker.
+    """
+    history = tuple(
+        DividendPayment(
+            as_int(ex),
+            as_int(pay),
+            as_float(amount),
+            kind if isinstance(kind, str) else None,
+        )
+        for ex, pay, amount, kind in zip_longest(
+            as_list(v.get("dividend_ex_date_h")) or [],
+            as_list(v.get("dividend_payment_date_h")) or [],
+            as_list(v.get("dividend_amount_h")) or [],
+            as_list(v.get("dividend_type_h")) or [],
+        )
+    )
+    history = tuple(p for p in history if p.ex_date is not None or p.pay_date is not None)[
+        :DIVIDEND_KEEP
+    ]
+    last_ex = as_int(v.get("dividend_ex_date_recent"))
+    yield_pct = as_float(v.get("dividends_yield_current"))
+    if not history and last_ex is None and yield_pct is None:
+        return None
+    return Dividend(
+        next_ex=as_int(v.get("dividend_ex_date_upcoming")),
+        next_pay=as_int(v.get("dividend_payment_date_upcoming")),
+        next_amount=as_float(v.get("dividend_amount_upcoming")),
+        last_ex=last_ex,
+        last_pay=as_int(v.get("dividend_payment_date_recent")),
+        last_amount=as_float(v.get("dividend_amount_recent")),
+        yield_pct=yield_pct,
+        history=history,
+    )
+
+
 def parse_quote(v: dict[str, Any]) -> Extras:
-    """Extract rating counts and EPS/revenue series from raw quote fields.
+    """Extract rating counts, EPS/revenue series and dividends from raw quote fields.
     Missing fields become None or empty tuples instead of raising.
     Series are trimmed to the periods the charts show.
     """
@@ -122,6 +162,7 @@ def parse_quote(v: dict[str, Any]) -> Extras:
         eps_fq=_periods(v.get("earnings_fq_h"), QUARTER_KEEP),
         rev_fy=_periods(v.get("revenues_fy_h"), ANNUAL_KEEP),
         rev_fq=_periods(v.get("revenues_fq_h"), QUARTER_KEEP),
+        dividend=_dividend(v),
     )
 
 

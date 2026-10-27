@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -76,15 +77,18 @@ class TestFormatting:
     @pytest.mark.parametrize(
         ("iso", "expected"),
         [
-            ("2026-10-12T08:55:00+07:00", "12 Oct 2026, 08:55 WIB"),
-            ("2026-10-12T01:55:00+00:00", "12 Oct 2026, 01:55 UTC"),
-            ("2026-10-12T08:55:00+05:30", "12 Oct 2026, 08:55 UTC+05:30"),
+            ("2026-10-12T08:55:00", "12 Oct 2026, 08:55"),
             (None, "—"),
             ("yesterday", "yesterday"),
         ],
     )
-    def test_generated_time_names_its_zone(self, iso, expected):
+    def test_timestamps_read_in_local_time(self, iso, expected):
         assert when(iso) == expected
+
+    def test_aware_timestamps_are_converted_to_local_time(self):
+        moment = datetime(2026, 10, 12, 1, 55, tzinfo=UTC).astimezone()
+
+        assert when("2026-10-12T01:55:00+00:00") == f"{moment.day} {moment:%b %Y}, {moment:%H:%M}"
 
     def test_trading_dates_read_as_weekday_and_day(self):
         assert day_label("2026-10-12") == "Mon 12 Oct"
@@ -106,7 +110,7 @@ class TestSuggestionCards:
             "3,600",
             "3,850",
             "2,990",
-            "−3.2%",
+            "−3.20%",
             "1 : 5.1",
             "Below consensus",
             "<svg",
@@ -173,11 +177,11 @@ class TestHeadAndDashboard:
             "3,070 – 3,100",
             "3,850",
             "2,990",
-            "−3.2%",
+            "−3.20%",
             "1 : 5.1",
-            "weight after 12.4%",
+            "weight after 12.40%",
             "Below consensus",
-            "≈ Rp 927,000",
+            "≈ IDR 927,000",
             "Informational only.",
         ):
             assert text in html

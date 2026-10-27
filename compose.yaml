@@ -9,6 +9,7 @@ services:
       # LIVESTOCKS_REFRESH_INTERVAL: 21600   # seconds between refreshes of one ticker
       # LIVESTOCKS_API_WAIT_SECONDS: 30      # how long the API waits for a first crawl
       # LIVESTOCKS_API_TOKEN: change-me       # bearer token for the /api/v1/suggestions endpoints
+      # LIVESTOCKS_STORAGE_SECRET: change-me  # signs the browser storage cookie; set it on a shared host
     volumes:
       # A named volume keeps the right permissions for the container's unprivileged user.
       # To keep the data in ./data instead, use "./data:/data" and make that folder writable by uid 1000.

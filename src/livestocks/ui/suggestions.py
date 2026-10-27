@@ -5,17 +5,16 @@ No function in this module performs I/O or touches NiceGUI.
 
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from html import escape
 from typing import Any, TypeGuard
 
 from livestocks.domain import SuggestionReport
-from livestocks.ui.components import ago, price_fmt
+from livestocks.ui.components import CURRENCY, ago, price_fmt
 
 ORDER = {"BUY": 0, "SELL": 1, "HOLD": 2}
 TONES = {"BUY": "buy", "SELL": "sell", "HOLD": "hold"}
 CHIP_TONES = {"BUY": "pos", "SELL": "neg", "HOLD": "warn"}
-WIB = timedelta(hours=7)
 
 
 def parse_report(report: SuggestionReport) -> dict[str, Any]:
@@ -56,9 +55,9 @@ def action_counts(items: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def when(iso: str | None) -> str:
-    """Format an ISO 8601 timestamp as '12 Oct 2026, 08:55 WIB'.
-    Offsets other than +07:00 are shown as UTC+hh:mm; text that does not parse is returned as is.
-    None gives a dash.
+    """Format an ISO 8601 timestamp in the server's local time, such as '12 Oct 2026, 15:55'.
+    Aware timestamps are converted to local time first; naive ones are taken to be local already.
+    Text that does not parse is returned escaped, and None gives a dash.
     """
     if not iso:
         return "—"
@@ -66,29 +65,19 @@ def when(iso: str | None) -> str:
         moment = datetime.fromisoformat(iso)
     except ValueError:
         return escape(iso)
-    offset = moment.utcoffset()
-    if offset is None:
-        zone = ""
-    elif offset == WIB:
-        zone = " WIB"
-    elif offset == timedelta(0):
-        zone = " UTC"
-    else:
-        minutes = int(offset.total_seconds() // 60)
-        sign = "+" if minutes >= 0 else "−"
-        zone = f" UTC{sign}{abs(minutes) // 60:02d}:{abs(minutes) % 60:02d}"
-    return f"{moment.day} {moment:%b %Y}, {moment:%H:%M}{zone}"
+    local = moment.astimezone() if moment.tzinfo else moment
+    return f"{local.day} {local:%b %Y}, {local:%H:%M}"
 
 
 def day_label(date: str) -> str:
     """Format a YYYY-MM-DD trading date as 'Mon 12 Oct'.
-    Text that is not a date is returned escaped and unchanged.
-    Used on the date buttons of the suggestions page.
+    Text that is not a date is returned unchanged, as plain text rather than HTML.
+    Callers escape the result when they put it in markup, so the labels never double-escape.
     """
     try:
         d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        return escape(date)
+        return date
     return f"{d:%a} {d.day} {d:%b}"
 
 
@@ -166,13 +155,23 @@ def _entry_of(row: dict[str, Any]) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
+def _lots_of(row: dict[str, Any]) -> int | None:
+    """Return the lot count when it is a positive whole number, otherwise None.
+    Booleans are rejected because bool is a subclass of int, so True would read as one lot.
+    """
+    lots = row.get("lots")
+    if isinstance(lots, bool) or not isinstance(lots, int) or lots <= 0:
+        return None
+    return lots
+
+
 def _cost(row: dict[str, Any]) -> str:
-    """Estimated order value in rupiah: lots x 100 shares x entry price. Empty when unknown."""
-    entry, lots = _entry_of(row), row.get("lots")
+    """Estimated order value in the display currency: lots x 100 shares x entry price. Empty when unknown."""
+    entry, lots = _entry_of(row), _lots_of(row)
     price = entry.get("price")
-    if not (_num(price) and isinstance(lots, int) and lots > 0):
+    if not (_num(price) and lots):
         return ""
-    return f"≈ Rp {price * lots * 100:,.0f}"
+    return f"≈ {CURRENCY} {price * lots * 100:,.0f}"
 
 
 SPARK_W, SPARK_H, SPARK_PAD = 240, 64, 4
@@ -207,13 +206,13 @@ def sparkline(closes: Sequence[float], levels: dict[str, Any]) -> str:
     return (
         f'<div class="sug-spark {tone}">'
         f'<svg viewBox="0 0 {SPARK_W} {SPARK_H}" role="img" '
-        f'aria-label="Price over the last {len(closes)} sessions, {change * 100:+.1f}%">'
+        f'aria-label="Price over the last {len(closes)} sessions, {change * 100:+.2f}%">'
         f'<polygon class="area" points="0,{SPARK_H} {points} {SPARK_W},{SPARK_H}"/>'
         f"{lines}"
         f'<polyline class="ln" points="{points}"/>'
         f'<circle class="end" cx="{SPARK_W}" cy="{y(closes[-1]):.1f}" r="3"/></svg>'
         f'<div class="cap muted fine"><span>{len(closes)} sessions</span>{legend}'
-        f'<span class="chg {tone}">{"−" if change < 0 else "+"}{abs(change) * 100:.1f}%</span></div>'
+        f'<span class="chg {tone}">{"−" if change < 0 else "+"}{abs(change) * 100:.2f}%</span></div>'
         "</div>"
     )
 
@@ -227,7 +226,7 @@ def stock_card(row: dict[str, Any], closes: Sequence[float] | None = None) -> st
     tone = TONES.get(action, "")
     ticker = escape(str(row.get("ticker", "?")))
     name = escape(str(row.get("name", "")))
-    lots = row.get("lots")
+    lots = _lots_of(row)
     entry = _entry_of(row)
     zone = (
         f"{_price(entry.get('low'))} – {_price(entry.get('high'))}"
@@ -235,16 +234,16 @@ def stock_card(row: dict[str, Any], closes: Sequence[float] | None = None) -> st
         else ""
     )
     stop_pct = row.get("stop_pct")
-    stop_note = f"{'−' if stop_pct <= 0 else '+'}{abs(stop_pct):.1f}%" if _num(stop_pct) else ""
+    stop_note = f"{'−' if stop_pct <= 0 else '+'}{abs(stop_pct):.2f}%" if _num(stop_pct) else ""
     rr = row.get("rr")
     weight = row.get("post_trade_weight_pct")
     badges = (
         f'<span class="chip">{"held" if row.get("held") else "new idea"}</span>'
         + ("" if row.get("verified") else '<span class="chip warn">unverified</span>')
-        + (f'<span class="chip">weight after {weight:.1f}%</span>' if _num(weight) else "")
+        + (f'<span class="chip">weight after {weight:.2f}%</span>' if _num(weight) else "")
     )
     has_levels = any(_num(v) for v in (entry.get("price"), row.get("stop"), row.get("tp1")))
-    show_lots = action != "HOLD" and isinstance(lots, int)
+    show_lots = action != "HOLD" and lots is not None
     metrics = (
         '<div class="sug-metrics">'
         + "".join(
@@ -328,7 +327,7 @@ def dashboard_card(
     return (
         '<section class="card sug-dash" aria-label="Daily suggestions">'
         '<div class="card-head"><h2>Daily suggestions</h2>'
-        f'<span class="sub">{day_label(date)} · stored {ago(received_at, now)}</span>'
+        f'<span class="sub">{escape(day_label(date))} · stored {ago(received_at, now)}</span>'
         '<a class="btn ghost fine" style="text-decoration:none" href="/suggestions">All suggestions →</a></div>'
         '<div class="card-body sug-head">'
         f'<div class="sug-chips">{ihsg_html}{count_chips(action_counts(items))}</div>'

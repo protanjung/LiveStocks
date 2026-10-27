@@ -6,23 +6,33 @@ Rendering is delegated to the pure builders in components, chart and financials.
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from datetime import date
 from functools import partial
 from html import escape
 from typing import Any
 
-from nicegui import app, ui
+from nicegui import app, events, ui
 
 from livestocks.config import Settings
-from livestocks.domain import TickerId, TrackedTicker
-from livestocks.services import ForecastService, SuggestionService, TickerView
+from livestocks.domain import CalendarEntry, TickerId, TrackedTicker
+from livestocks.services import (
+    CalendarService,
+    CalendarUnavailableError,
+    ForecastService,
+    SuggestionService,
+    TickerView,
+)
 from livestocks.ui import components as c
+from livestocks.ui import dividends as dv
 from livestocks.ui import suggestions as s
 from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
+from livestocks.ui.live import guarded, render_or_notice
 from livestocks.ui.models import PageState
+from livestocks.ui.primitives import card, crumb, empty_card, page_title
 from livestocks.ui.seasonals import seasonal_options, seasonal_returns
-from livestocks.ui.theme import CSS, FONTS_HEAD
+from livestocks.ui.theme import FONTS_HEAD, STYLESHEET_HEAD
 
 
 class T(ui.element):
@@ -52,19 +62,49 @@ SPARK_DAYS = 90
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 2 * 365 * 86400}
 
 
-def register(service: ForecastService, suggestions: SuggestionService, settings: Settings) -> None:
-    """Define the dashboard, detail and suggestions pages and bind them to the services.
+DASHBOARD_NOTE = (
+    "Source: TradingView analyst forecasts. Refreshed every {interval}. Not investment advice."
+)
+SUGGESTIONS_NOTE = (
+    "Source: daily suggestions from the scheduled Claude routine. Not investment advice."
+)
+CALENDAR_NOTE = (
+    "Source: TradingView scanner. Dates can change before payment; check the issuer. "
+    "Not investment advice."
+)
+
+
+# Runs in the browser: one listener handles sort, retry, remove and row navigation.
+TABLE_CLICK_JS = (
+    "(e) => {"
+    " const act = e.target.closest('[data-act]');"
+    " if (act) { emit(act.dataset.act, act.dataset.key); return; }"
+    " const row = e.target.closest('tr[data-href]');"
+    " if (row) emit('nav', row.dataset.href);"
+    "}"
+)
+
+
+def register(
+    service: ForecastService,
+    suggestions: SuggestionService,
+    calendar: CalendarService,
+    settings: Settings,
+) -> None:
+    """Define the dashboard, detail, suggestions and calendar pages and bind them to the services.
     Pages read the services on a timer and refresh only when something changed.
     Add, remove and retry actions go through the forecast service, which wakes the updater.
     """
 
     def tv_url(r: TrackedTicker) -> str:
-        return f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
+        return escape(
+            f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
+        )
 
     # ---- shared shell ----
     async def shell(state: PageState, on_theme: Callable[[], Awaitable[None]]) -> None:
         ui.add_head_html(FONTS_HEAD)
-        ui.add_css(CSS)
+        ui.add_head_html(STYLESHEET_HEAD)
         dark = ui.dark_mode(state.dark)
 
         async def toggle() -> None:
@@ -116,6 +156,10 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                 T("button").classes("btn ghost").on(
                     "click", lambda: ui.navigate.to("/suggestions")
                 ).text = "Suggestions"
+            if settings.ui_calendar:
+                T("button").classes("btn ghost").on(
+                    "click", lambda: ui.navigate.to("/calendar")
+                ).text = "Calendar"
             with T("div").classes("status").props('aria-live="polite"'):
                 dot = T("span").classes("dot")
                 status = ui.label()
@@ -147,13 +191,13 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                 )
 
         await tick()
-        ui.timer(2.0, tick)
+        ui.timer(2.0, guarded("header status", tick))
 
     def new_state() -> PageState:
         return PageState(dark=app.storage.user.get("dark", True))
 
     # ---- dashboard ----
-    @ui.page("/")
+    @ui.page("/", title="Dashboard · LiveStocks")
     async def index() -> None:
         state = new_state()
 
@@ -177,10 +221,13 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
             )
 
         last: dict[str, Any] = {"sig": None}
+        rows_by_key: dict[str, TrackedTicker] = {}
 
         @ui.refreshable
         async def body() -> None:
             rows = await service.list_tickers()
+            rows_by_key.clear()
+            rows_by_key.update({r.key: r for r in rows})
             last["sig"] = await sig()
             with T("div").classes("page-title"):
                 T("h1").text = "Forecast dashboard"
@@ -207,20 +254,6 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                 state.sort_key, state.sort_dir = key, (1 if key == "ticker" else -1)
             await body.refresh()
 
-        def sorted_rows(rows: list[TrackedTicker]) -> list[TrackedTicker]:
-            keys = {
-                "ticker": lambda r: r.symbol,
-                "price": lambda r: r.forecast.price or 0,
-                "up": lambda r: r.upside if r.upside is not None else -1e9,
-                "rating": lambda r: (
-                    r.forecast.rating_mark if r.forecast and r.forecast.rating_mark else 99
-                ),
-                "n": lambda r: r.forecast.n_analysts or 0,
-            }
-            ok = [r for r in rows if r.forecast]
-            rest = [r for r in rows if not r.forecast]
-            return sorted(ok, key=keys[state.sort_key], reverse=state.sort_dir < 0) + rest
-
         async def remove(r: TrackedTicker) -> None:
             await service.remove(r.id)
             ui.notify(f"Removed {r.key}")
@@ -230,108 +263,50 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
             await service.retry(r.id)
             await body.refresh()
 
+        async def on_table(e: events.GenericEventArguments) -> None:
+            action, value = e.args[0], e.args[1]
+            if action == "sort":
+                await sort_by(value)
+            elif action == "nav":
+                ui.navigate.to(value)
+            elif (r := rows_by_key.get(value)) is not None:
+                if action == "retry":
+                    await retry(r)
+                elif action == "remove":
+                    await remove(r)
+
         def table(rows: list[TrackedTicker]) -> None:
-            def th(label: str, key: str | None = None, right: bool = False) -> None:
-                el = T("th").classes("r" if right else "")
-                with el:
-                    if key:
-                        on = state.sort_key == key
-                        if on:
-                            el.props(
-                                f'aria-sort="{"ascending" if state.sort_dir > 0 else "descending"}"'
-                            )
-                        T("button").on("click", partial(sort_by, key)).text = label + (
-                            (" ↑" if state.sort_dir > 0 else " ↓") if on else ""
-                        )
-                    else:
-                        el.text = label
-
-            with T("section").classes("card").props('aria-label="Tracked tickers"'):
-                with T("div").classes("card-head"):
-                    T("h2").text = "Forecast table"
-                    ui.html(
-                        '<span><i class="sw px"></i>Price</span><span><i class="sw avg"></i>Avg target</span>'
-                        '<span><i class="sw span"></i>Low to high target</span>',
-                        sanitize=False,
-                    ).classes("legend")
-                with T("div").classes("tablewrap").style("margin-top:8px"), T("table"):
-                    with T("thead"), T("tr"):
-                        th("Ticker", "ticker")
-                        th("Price", "price", True)
-                        T("th").classes("r").text = "Avg target"
-                        th("Upside", "up", True)
-                        T("th").text = "Target range"
-                        th("Rating", "rating")
-                        th("Analysts", "n", True)
-                        T("th").text = "Updated"
-                        T("th")
-                    with T("tbody"):
-                        for r in sorted_rows(rows):
-                            row_view(r)
-
-        def row_view(r: TrackedTicker) -> None:
-            f = r.forecast
-            tr = T("tr").on("click", partial(ui.navigate.to, f"/t/{r.exchange}/{r.symbol}"))
-            with tr:
-                ui.html(c.ticker_cell(r), sanitize=False, tag="td")
-                busy = r.key in service.fetching()
-                if f is None:
-                    if r.status == "failed":
-                        msg = f'<td colspan="6" class="err">⚠ {escape(r.last_error or "failed")} · gave up after {r.fail_count} tries</td>'
-                    elif r.status == "error":
-                        msg = f'<td colspan="6" class="err">⚠ {escape(r.last_error or "error")} · retry {r.fail_count}</td>'
-                    else:
-                        msg = '<td colspan="6" class="muted"><span class="spin"></span>Fetching first forecast…</td>'
-                    ui.html(msg, sanitize=False, tag="td").props('colspan="6"')
-                else:
-                    ui.html(
-                        f'<div class="num">{c.price_fmt(f.price)}</div>{c.change_line(f.change_pct)}',
-                        sanitize=False,
-                        tag="td",
-                    ).classes("r")
-                    ui.html(
-                        c.price_fmt(f.pt_avg) if f.pt_avg else "—", sanitize=False, tag="td"
-                    ).classes("r num")
-                    ui.html(c.upside_chip(r.upside), sanitize=False, tag="td").classes("r")
-                    ui.html(c.range_bar(f), sanitize=False, tag="td")
-                    ui.html(c.rate_pill(f.rating_mark), sanitize=False, tag="td")
-                    ui.html(
-                        str(f.n_analysts if f.n_analysts is not None else "—"),
-                        sanitize=False,
-                        tag="td",
-                    ).classes("r num")
-                ui.html(
-                    '<span class="spin"></span>fetching'
-                    if busy and f
-                    else c.ago(r.fetched_at or r.last_fetch),
-                    sanitize=False,
-                    tag="td",
-                ).classes("muted")
-                with T("td").classes("r"):
-                    if r.status in ("error", "failed"):
-                        T("button").classes("act retry").props(
-                            'aria-label="Retry" title="Retry"'
-                        ).on("click.stop", partial(retry, r)).text = "↻"
-                    T("button").classes("act").props(
-                        f'aria-label="Remove {r.symbol}" title="Remove"'
-                    ).on("click.stop", partial(remove, r)).text = "✕"
+            legend = (
+                '<div class="card-body"><div class="legend">'
+                '<span><i class="sw px"></i>Price</span>'
+                '<span><i class="sw avg"></i>Avg target</span>'
+                '<span><i class="sw span"></i>Low to high target</span></div></div>'
+            )
+            table_html = c.forecast_table(
+                rows, state.sort_key, state.sort_dir, service.fetching(), int(time.time())
+            )
+            body_html = f'{legend}<div class="tablewrap mt-8">{table_html}</div>'
+            ui.html(
+                card("Forecast table", body_html, label="Tracked tickers", padded=False),
+                sanitize=False,
+            ).on("click", on_table, js_handler=TABLE_CLICK_JS)
 
         async def theme_changed() -> None:
             await body.refresh()
 
         await shell(state, theme_changed)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))
 
         async def maybe_refresh() -> None:
             if await sig() != last["sig"]:
                 await body.refresh()
 
-        ui.timer(3.0, maybe_refresh)
+        ui.timer(3.0, guarded("dashboard refresh", maybe_refresh))
 
     # ---- detail ----
-    @ui.page("/t/{exchange}/{symbol}")
+    @ui.page("/t/{exchange}/{symbol}", title="Ticker · LiveStocks")
     async def detail(exchange: str, symbol: str) -> None:
         tid = TickerId(exchange.upper(), symbol.upper())
         state = new_state()
@@ -448,6 +423,15 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                     else:
                         T("p").classes("muted").text = "Not enough price history for seasonals yet."
 
+            with T("div").classes("card"):
+                with T("div").classes("card-head"):
+                    T("h2").text = "Dividends"
+                with T("div").classes("card-body"):
+                    if extras is None or extras.dividend is None:
+                        T("p").classes("muted").text = "No dividend data for this ticker yet."
+                    else:
+                        ui.html(dv.dividend_card(extras.dividend, int(time.time())), sanitize=False)
+
             if extras is None:
                 ui.html(
                     '<div class="card"><div class="card-body muted">EPS, revenue and the analyst rating breakdown '
@@ -489,17 +473,17 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))
 
         async def maybe_refresh() -> None:
             if sig_of(await service.get_ticker(tid)) != last["sig"]:
                 await body.refresh()
 
-        ui.timer(3.0, maybe_refresh)
+        ui.timer(3.0, guarded("ticker refresh", maybe_refresh))
 
     # ---- suggestions ----
-    @ui.page("/suggestions")
+    @ui.page("/suggestions", title="Suggestions · LiveStocks")
     async def suggestions_page() -> None:
         state = new_state()
         last: dict[str, Any] = {"sig": None}
@@ -511,10 +495,15 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
             exchange = settings.default_exchange.upper()
             since = int(time.time()) - SPARK_DAYS * 86400
             tickers = sorted({str(r["ticker"]) for r in items if r.get("ticker")})
-            bars = await asyncio.gather(
-                *(service.price_history(TickerId(exchange, t), since) for t in tickers)
+            results = await asyncio.gather(
+                *(service.price_history(TickerId(exchange, t), since) for t in tickers),
+                return_exceptions=True,
             )
-            return {t: [b.close for b in bs] for t, bs in zip(tickers, bars, strict=True)}
+            closes: dict[str, list[float]] = {}
+            for t, result in zip(tickers, results, strict=True):
+                # One ticker with no history must not blank the whole suggestions page.
+                closes[t] = [] if isinstance(result, BaseException) else [b.close for b in result]
+            return closes
 
         @ui.refreshable
         async def body() -> None:
@@ -559,20 +548,103 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(SUGGESTIONS_NOTE)
 
         async def maybe_refresh() -> None:
             reports = await suggestions.recent(14) if settings.ui_suggestions else []
             if sig_of(reports) != last["sig"]:
                 await body.refresh()
 
-        ui.timer(15.0, maybe_refresh)
+        ui.timer(15.0, guarded("suggestions refresh", maybe_refresh))
 
-    def footer() -> None:
-        ui.html(
-            "<span>Source: TradingView analyst forecasts. Refreshed every "
-            f"{max(1, settings.refresh_interval // 3600)} hours. Not investment advice.</span>",
-            sanitize=False,
-            tag="footer",
-        ).classes("wrap foot")
+    # ---- dividend calendar ----
+    @ui.page("/calendar", title="Calendar · LiveStocks")
+    async def calendar_page() -> None:
+        state = new_state()
+        last: dict[str, Any] = {"sig": None}
+        exchange = settings.default_exchange.upper()
+
+        def sig_of(entries: list[CalendarEntry]) -> tuple[Any, ...]:
+            # The date is part of the signature so "today" moves on at midnight without a reload.
+            rows = tuple((e.symbol, e.ex_date, e.pay_date, e.kind) for e in entries)
+            return (date.today().isoformat(), rows)
+
+        async def load() -> tuple[list[CalendarEntry], str | None]:
+            if not settings.ui_calendar:
+                return [], None
+            try:
+                return await calendar.entries(exchange), None
+            except CalendarUnavailableError as e:
+                return [], describe(e)
+
+        @ui.refreshable
+        async def body() -> None:
+            entries, problem = await load()
+            last["sig"] = sig_of(entries)
+            ui.html(crumb(("← Dashboard", "/"), ("Calendar", None)), sanitize=False)
+            ui.html(
+                page_title(
+                    "Dividend calendar", f"{exchange} · announced and recent ex-dividend dates"
+                ),
+                sanitize=False,
+            )
+            if not settings.ui_calendar:
+                ui.html(
+                    empty_card(
+                        "Calendar is turned off",
+                        "The dividend calendar is disabled for this server.",
+                    ),
+                    sanitize=False,
+                )
+                return
+            if problem is not None:
+                ui.html(empty_card("Calendar unavailable", problem), sanitize=False)
+                return
+            year, month = dv.month_of(date.today(), state.month_offset)
+            with T("section").classes("card"):
+                with T("div").classes("card-head"):
+                    T("h2").text = dv.month_label(year, month)
+                    with T("div").style("display:flex;gap:8px"):
+                        T("button").classes("btn ghost").on(
+                            "click", partial(shift_month, -1)
+                        ).text = "‹"
+                        if state.month_offset:
+                            T("button").classes("btn ghost").on(
+                                "click", partial(shift_month, -state.month_offset)
+                            ).text = "Today"
+                        T("button").classes("btn ghost").on(
+                            "click", partial(shift_month, 1)
+                        ).text = "›"
+                with T("div").classes("card-body"):
+                    ui.html(dv.month_grid(entries, year, month, date.today()), sanitize=False)
+            sections = dv.calendar_sections(entries)
+            if not sections:
+                ui.html(
+                    empty_card(
+                        "No dividends to show",
+                        f"Nothing announced or paid in the last month on {exchange}.",
+                    ),
+                    sanitize=False,
+                )
+                return
+            ui.html(sections, sanitize=False)
+
+        async def shift_month(step: int) -> None:
+            state.month_offset += step
+            await body.refresh()
+
+        await shell(state, body.refresh)
+        with T("div").classes("wrap"), T("main"):
+            await render_or_notice(body)
+        footer(CALENDAR_NOTE)
+
+        async def maybe_refresh() -> None:
+            entries, _ = await load()
+            if sig_of(entries) != last["sig"]:
+                await body.refresh()
+
+        ui.timer(60.0, guarded("calendar refresh", maybe_refresh))
+
+    def footer(note: str) -> None:
+        ui.html(f"<span>{escape(note)}</span>", sanitize=False, tag="footer").classes("wrap foot")

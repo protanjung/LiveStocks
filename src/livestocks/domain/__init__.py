@@ -5,6 +5,10 @@ Public names are re-exported from this package root.
 
 from livestocks.domain.errors import DomainError, InvalidTickerError
 from livestocks.domain.models import (
+    CalendarEntry,
+    CalendarKind,
+    Dividend,
+    DividendPayment,
     ErrorKind,
     Extras,
     Forecast,
@@ -20,6 +24,10 @@ from livestocks.domain.ratings import rating_label
 from livestocks.domain.tickers import parse_ticker
 
 __all__ = [
+    "CalendarEntry",
+    "CalendarKind",
+    "Dividend",
+    "DividendPayment",
     "DomainError",
     "ErrorKind",
     "Extras",

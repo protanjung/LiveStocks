@@ -3,6 +3,10 @@ Settings are read once, the store is opened and the updater and pages are wired.
 Control then passes to NiceGUI's uvicorn server.
 """
 
+import mimetypes
+from pathlib import Path
+
+from loguru import logger
 from nicegui import app, ui
 from nicegui.ui_run import DocsConfig
 
@@ -11,10 +15,12 @@ from livestocks.api import build_router, build_suggestions_router, register_erro
 from livestocks.config import Settings
 from livestocks.config import settings as default_settings
 from livestocks.logging_config import configure_logging
-from livestocks.services import ForecastService, SuggestionService, Updater
+from livestocks.services import CalendarService, ForecastService, SuggestionService, Updater
 from livestocks.storage import Store
 from livestocks.ui import register
 
+mimetypes.add_type("font/woff2", ".woff2")
+DEFAULT_SECRET = "livestocks-local"
 DOCS = DocsConfig(
     title="LiveStocks API",
     summary="Analyst forecasts crawled from TradingView.",
@@ -31,10 +37,12 @@ def create_app(settings: Settings = default_settings) -> None:
     Startup and shutdown hooks start and stop the updater and close the store.
     Call it once before ui.run(); tests may pass their own Settings.
     """
+    app.add_static_files("/static", Path(__file__).parent / "ui" / "static")
     store = Store(settings.db_path)
     updater = Updater(store, settings)
     service = ForecastService(store, updater, settings)
     suggestions = SuggestionService(store)
+    calendar = CalendarService(settings)
 
     async def startup() -> None:
         await store.initialize()
@@ -42,11 +50,12 @@ def create_app(settings: Settings = default_settings) -> None:
 
     async def shutdown() -> None:
         await updater.stop()
+        await calendar.close()
         await store.close()
 
     app.on_startup(startup)
     app.on_shutdown(shutdown)
-    register(service, suggestions, settings)
+    register(service, suggestions, calendar, settings)
     app.include_router(build_router(service), prefix="/api/v1")
     app.include_router(build_suggestions_router(suggestions, settings), prefix="/api/v1")
     register_error_handlers(app)
@@ -60,6 +69,11 @@ def main() -> None:
     This is the target of the livestocks console script.
     """
     configure_logging(default_settings.log_level, json=default_settings.log_json)
+    if default_settings.host == "0.0.0.0" and default_settings.storage_secret == DEFAULT_SECRET:
+        logger.warning(
+            "listening on all interfaces with the default storage secret; "
+            "set LIVESTOCKS_STORAGE_SECRET"
+        )
     create_app()
     ui.run(
         host=default_settings.host,
@@ -69,7 +83,7 @@ def main() -> None:
         dark=True,
         reload=False,
         show=False,
-        storage_secret="livestocks-local",
+        storage_secret=default_settings.storage_secret,
         show_welcome_message=False,
         fastapi_docs=DOCS,
     )

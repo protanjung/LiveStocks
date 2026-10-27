@@ -81,3 +81,16 @@ The architecture test fails until the three fixed files exist.
 
 [Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `refactor:`, `build:`, `docs:`, `test:`,
 `style:`, with an optional scope such as `feat(api):`. The body explains why, not what.
+
+## Web UI structure
+
+The pages live in `ui/pages.py` inside one `register()` call. Shared HTML lives in pure builder modules: `components`
+(dashboard pieces, the sortable forecast table), `dividends` (dividend card and calendar), `suggestions`, `chart`,
+`financials`, `seasonals`, `primitives` (cards, crumbs, empty states, table headers) and `live` (guards for timers and
+first renders). Each builder escapes its text and is unit-tested without NiceGUI.
+
+Styles live in `ui/static/app.css`, served from `/static/app.css`. Colour tokens are defined on `:root` and
+`body.body--light`. `tests/unit/ui/test_theme.py` checks text contrast in both themes and that every class the builders
+use is styled. `tests/unit/ui/test_chart.py` checks that the chart palette matches the stylesheet.
+
+Fonts are IBM Plex, self-hosted in `ui/static/fonts/` under the SIL Open Font License (`OFL.txt` alongside).

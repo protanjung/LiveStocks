@@ -1,11 +1,14 @@
 """Pure HTML builders for dashboard widgets.
-Class names come from theme.CSS and every dynamic string is escaped here.
+Class names come from ui/static/app.css and every dynamic string is escaped here.
 No function in this module performs I/O or touches NiceGUI.
 """
 
+import math
 import time
+from collections.abc import Callable
 from datetime import datetime
 from html import escape
+from typing import Any
 
 from livestocks.domain import Forecast, TrackedTicker, rating_label
 
@@ -13,10 +16,12 @@ from livestocks.domain import Forecast, TrackedTicker, rating_label
 # ---- formatting ----
 def fmt(v: float | None, d: int = 0) -> str:
     """Format a number with thousands separators and d decimals.
-    None becomes an em dash so tables never show the word None.
+    None and non-finite values become an em dash so tables never show None, nan or inf.
     Used for counts and other plain numbers.
     """
-    return "—" if v is None else f"{v:,.{d}f}"
+    if v is None or not math.isfinite(v):
+        return "—"
+    return f"{v:,.{d}f}"
 
 
 def price_fmt(v: float | None) -> str:
@@ -24,17 +29,20 @@ def price_fmt(v: float | None) -> str:
     So IDX prices read 2,310 while a US price reads 333.63.
     None becomes an em dash.
     """
-    if v is None:
+    if v is None or not math.isfinite(v):
         return "—"
     return fmt(v, 2 if abs(v) < 1000 and v != int(v) else 0)
 
 
+CURRENCY = "IDR"  # display currency for amounts; prices are quoted in it on IDX
+
+
 def pct(v: float) -> str:
-    """Format a fraction as a signed percentage with one decimal.
+    """Format a fraction as a signed percentage with two decimals.
     Negative values use a true minus sign (-4.2%), positive ones a plus sign.
     Pair it with arrow() to build the up and down chips.
     """
-    return f"{'+' if v >= 0 else '−'}{abs(v) * 100:.1f}%"
+    return f"{'+' if v >= 0 else '−'}{abs(v) * 100:.2f}%"
 
 
 def arrow(v: float) -> str:
@@ -52,7 +60,8 @@ def ago(ts: int | None, now: int | None = None) -> str:
     """
     if ts is None:
         return "—"
-    s = max(0, (now or int(time.time())) - ts)
+    clock = now if now is not None else int(time.time())
+    s = max(0, clock - ts)
     if s < 60:
         return "just now"
     if s < 3600:
@@ -77,6 +86,15 @@ def duration(seconds: int | None) -> str:
     return f"{h}h {m:02d}m" if h else f"{m}m"
 
 
+def interval_text(seconds: int) -> str:
+    """Describe a refresh interval in whole hours, as 'hour' or '6 hours'. Never less than one hour.
+    Used in page footers, so the grammar matches the number.
+    Intervals are rounded to whole hours, so 5400 seconds reads as two hours.
+    """
+    hours = max(1, round(seconds / 3600))
+    return "hour" if hours == 1 else f"{hours} hours"
+
+
 def date_short(ts: int | None, year: bool = True) -> str:
     """Format a unix timestamp as '29 Oct 2026', optionally without the year.
     None or zero gives a dash.
@@ -84,7 +102,10 @@ def date_short(ts: int | None, year: bool = True) -> str:
     """
     if not ts:
         return "—"
-    d = datetime.fromtimestamp(ts)
+    try:
+        d = datetime.fromtimestamp(ts)
+    except (OverflowError, OSError, ValueError):
+        return "—"
     return f"{d.day} {d:%b %Y}" if year else f"{d.day} {d:%b}"
 
 
@@ -147,14 +168,143 @@ def range_bar(f: Forecast) -> str:
 
 
 def ticker_cell(r: TrackedTicker) -> str:
-    """Return the ticker column cell: exchange badge, symbol and company name.
+    """Return the ticker column cell: exchange badge, a link to the symbol and the company name.
+    The symbol is a real link so keyboard and middle-click users can open the detail page.
     All text is HTML-escaped.
-    Shared by every row of the dashboard table.
     """
+    href = escape(f"/t/{r.exchange}/{r.symbol}", quote=True)
     return (
         f'<div class="tk"><div class="badge-ex">{escape(r.exchange)}</div>'
-        f'<div><b>{escape(r.symbol)}</b><span class="nm">{escape(r.name or "—")}</span></div></div>'
+        f'<div><b><a href="{href}">{escape(r.symbol)}</a></b>'
+        f'<span class="nm">{escape(r.name or "—")}</span></div></div>'
     )
+
+
+SORT_KEYS = ("ticker", "price", "up", "rating", "n")
+# Columns after the ticker cell: price, avg target, upside, range, rating, analysts, updated, actions.
+_VALUE_COLUMNS = 6
+
+
+def sort_tickers(rows: list[TrackedTicker], key: str, direction: int) -> list[TrackedTicker]:
+    """Return rows ordered by one of SORT_KEYS, with tickers that have no forecast last.
+    direction is 1 for ascending and -1 for descending; unknown keys raise KeyError.
+    Tickers without a forecast keep their input order after the ranked ones.
+    """
+    keys: dict[str, Callable[[TrackedTicker], Any]] = {
+        "ticker": lambda r: r.symbol,
+        "price": lambda r: r.forecast.price or 0 if r.forecast else 0,
+        "up": lambda r: r.upside if r.upside is not None else -1e9,
+        "rating": lambda r: r.forecast.rating_mark if r.forecast and r.forecast.rating_mark else 99,
+        "n": lambda r: (r.forecast.n_analysts or 0) if r.forecast else 0,
+    }
+    ok = [r for r in rows if r.forecast]
+    rest = [r for r in rows if not r.forecast]
+    return sorted(ok, key=keys[key], reverse=direction < 0) + rest
+
+
+def _head(label: str, key: str, sort_key: str, sort_dir: int, right: bool = False) -> str:
+    """Return a sortable column header: a real button, with aria-sort on the active column."""
+    cls = ' class="r"' if right else ""
+    if key != sort_key:
+        return (
+            f'<th scope="col"{cls}><button type="button" data-act="sort" data-key="{key}">'
+            f"{escape(label)}</button></th>"
+        )
+    up = sort_dir > 0
+    marker = "↑" if up else "↓"
+    order = "ascending" if up else "descending"
+    return (
+        f'<th scope="col"{cls} aria-sort="{order}"><button type="button" data-act="sort" '
+        f'data-key="{key}">{escape(label)}<span aria-hidden="true"> {marker}</span></button></th>'
+    )
+
+
+def _action_buttons(r: TrackedTicker) -> str:
+    """Return the retry and remove buttons for one row, named after the symbol they act on."""
+    key = escape(r.key, quote=True)
+    sym = escape(r.symbol)
+    retry = (
+        f'<button type="button" class="act retry" data-act="retry" data-key="{key}" '
+        f'aria-label="Retry {sym}" title="Retry">↻</button>'
+        if r.status in ("error", "failed")
+        else ""
+    )
+    remove = (
+        f'<button type="button" class="act" data-act="remove" data-key="{key}" '
+        f'aria-label="Remove {sym}" title="Remove">✕</button>'
+    )
+    return retry + remove
+
+
+def _row(r: TrackedTicker, busy: bool, now: int) -> str:
+    """Return one table row: the ticker link, then values, or a single message for missing forecasts.
+    The whole row carries data-href so a click anywhere on it opens the detail page.
+    Failed and failing tickers show their error; pending ones show a fetching note.
+    """
+    f = r.forecast
+    href = escape(f"/t/{r.exchange}/{r.symbol}", quote=True)
+    cells = [f"<td>{ticker_cell(r)}</td>"]
+    if f is None:
+        if r.status == "failed":
+            msg = (
+                f'<span class="err">⚠ {escape(r.last_error or "failed")} · '
+                f"gave up after {r.fail_count} tries</span>"
+            )
+        elif r.status == "error":
+            msg = (
+                f'<span class="err">⚠ {escape(r.last_error or "error")} · '
+                f"retry {r.fail_count}</span>"
+            )
+        else:
+            msg = '<span class="muted"><span class="spin"></span>Fetching first forecast…</span>'
+        cells.append(f'<td colspan="{_VALUE_COLUMNS + 1}">{msg}</td>')
+    else:
+        avg = price_fmt(f.pt_avg) if f.pt_avg else "—"
+        n = str(f.n_analysts if f.n_analysts is not None else "—")
+        cells.append(
+            f'<td class="r"><div class="num">{price_fmt(f.price)}</div>{change_line(f.change_pct)}</td>'
+            f'<td class="r num">{avg}</td>'
+            f'<td class="r">{upside_chip(r.upside)}</td>'
+            f"<td>{range_bar(f)}</td>"
+            f"<td>{rate_pill(f.rating_mark)}</td>"
+            f'<td class="r num">{n}</td>'
+        )
+    updated = (
+        '<span class="spin"></span>fetching'
+        if busy and f
+        else ago(r.fetched_at or r.last_fetch, now)
+    )
+    cells.append(f'<td class="muted">{updated}</td>')
+    cells.append(f'<td class="r">{_action_buttons(r)}</td>')
+    return f'<tr data-href="{href}">{"".join(cells)}</tr>'
+
+
+def forecast_table(
+    rows: list[TrackedTicker],
+    sort_key: str,
+    sort_dir: int,
+    busy: frozenset[str] | set[str],
+    now: int,
+) -> str:
+    """Return the dashboard table as one HTML string, rows in the requested sort order.
+    Headers and row actions carry data-act attributes, and the page handles clicks on them in one place.
+    busy holds the EXCHANGE:SYMBOL keys being crawled now; now is unix seconds for the updated column.
+    """
+    heads = "".join(
+        [
+            _head("Ticker", "ticker", sort_key, sort_dir),
+            _head("Price", "price", sort_key, sort_dir, right=True),
+            '<th scope="col" class="r">Avg target</th>',
+            _head("Upside", "up", sort_key, sort_dir, right=True),
+            '<th scope="col">Target range</th>',
+            _head("Rating", "rating", sort_key, sort_dir),
+            _head("Analysts", "n", sort_key, sort_dir, right=True),
+            '<th scope="col">Updated</th>',
+            '<th scope="col"><span class="visually-hidden">Actions</span></th>',
+        ]
+    )
+    body = "".join(_row(r, r.key in busy, now) for r in sort_tickers(rows, sort_key, sort_dir))
+    return f"<table><thead><tr>{heads}</tr></thead><tbody>{body}</tbody></table>"
 
 
 # ---- dashboard sections ----
@@ -287,9 +437,12 @@ def big_range(f: Forecast) -> str:
     Shows a note instead when any of the four values is missing.
     """
     low, high, avg, price = f.pt_low, f.pt_high, f.pt_avg, f.price
-    if low is None or high is None or avg is None or price is None:
-        return '<p class="muted">Price target range unavailable for this ticker.</p>'
+    note = '<p class="muted">Price target range unavailable for this ticker.</p>'
+    if low is None or high is None or avg is None or not price:
+        return note
     lo, hi = min(low, price) * 0.97, max(high, price) * 1.03
+    if hi <= lo:
+        return note
 
     def p(x: float) -> float:
         return (x - lo) / (hi - lo) * 100

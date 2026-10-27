@@ -5,8 +5,18 @@ Extras are serialised as JSON text because they are always read and written as o
 
 import json
 from dataclasses import asdict
+from typing import Any
 
-from livestocks.domain import ErrorKind, Extras, Forecast, Period, SuggestionReport, TrackedTicker
+from livestocks.domain import (
+    Dividend,
+    DividendPayment,
+    ErrorKind,
+    Extras,
+    Forecast,
+    Period,
+    SuggestionReport,
+    TrackedTicker,
+)
 from livestocks.storage.models import ForecastTable, SuggestionReportTable, TickerTable
 
 _PERIOD_FIELDS = ("eps_fy", "eps_fq", "rev_fy", "rev_fq")
@@ -86,14 +96,24 @@ def extras_to_json(extras: Extras) -> str:
     return json.dumps(asdict(extras))
 
 
+def _dividend_from_dict(data: dict[str, Any]) -> Dividend:
+    """Rebuild a Dividend from its stored dictionary, turning each history entry into a payment.
+    Raises KeyError or TypeError if a field is missing or unexpected.
+    """
+    history = tuple(DividendPayment(**payment) for payment in data["history"])
+    return Dividend(**{**data, "history": history})
+
+
 def extras_from_json(text: str) -> Extras:
     """Rebuild Extras from the JSON text written by extras_to_json.
-    Period lists come back as tuples of Period.
+    Period lists come back as tuples of Period, and dividend is None when the text predates it.
     Raises KeyError or TypeError if the stored text has a different shape.
     """
     data = json.loads(text)
     for name in _PERIOD_FIELDS:
         data[name] = tuple(Period(**period) for period in data[name])
+    dividend = data.get("dividend")
+    data["dividend"] = None if dividend is None else _dividend_from_dict(dividend)
     return Extras(**data)
 
 
