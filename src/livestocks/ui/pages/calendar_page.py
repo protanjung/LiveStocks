@@ -174,7 +174,7 @@ def register(deps: Deps) -> None:
             state.month_offset += step
             await refresh_workspace()
 
-        await shell(deps, state, body.refresh)
+        await shell(deps, state, body.refresh, current="calendar")
         with T("div").classes("wrap"), T("main"):
             await render_or_notice(body)
         footer(CALENDAR_NOTE)

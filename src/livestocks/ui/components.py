@@ -168,14 +168,14 @@ def range_bar(f: Forecast) -> str:
 
 
 def ticker_cell(r: TrackedTicker) -> str:
-    """Return the ticker column cell: exchange badge, a link to the symbol and the company name.
+    """Return the ticker column cell: a link to the symbol with its exchange, and the company name.
     The symbol is a real link so keyboard and middle-click users can open the detail page.
     All text is HTML-escaped.
     """
     href = escape(f"/t/{r.exchange}/{r.symbol}", quote=True)
     return (
-        f'<div class="tk"><div class="badge-ex">{escape(r.exchange)}</div>'
-        f'<div><b><a href="{href}">{escape(r.symbol)}</a></b>'
+        f'<div class="tk"><div><b><a href="{href}">{escape(r.symbol)}</a>'
+        f'<span class="tk-ex">{escape(r.exchange)}</span></b>'
         f'<span class="nm">{escape(r.name or "—")}</span></div></div>'
     )
 
@@ -276,7 +276,8 @@ def _row(r: TrackedTicker, busy: bool, now: int) -> str:
     )
     cells.append(f'<td class="muted">{updated}</td>')
     cells.append(f'<td class="r">{_action_buttons(r)}</td>')
-    return f'<tr data-href="{href}">{"".join(cells)}</tr>'
+    tone = "" if r.upside is None else " up" if r.upside >= 0 else " down"
+    return f'<tr class="{tone.strip()}" data-href="{href}">{"".join(cells)}</tr>'
 
 
 def forecast_table(
@@ -321,7 +322,10 @@ def kpi_strip(rows: list[TrackedTicker]) -> str:
     if avg_up is None:
         up_html = '<div class="value">—</div>'
     else:
-        up_html = f'<div class="value {"pos" if avg_up >= 0 else "neg"}">{arrow(avg_up)} {pct(avg_up)}</div>'
+        up_html = (
+            f'<div class="value {"pos" if avg_up >= 0 else "neg"}">'
+            f'<span class="arr">{arrow(avg_up)}</span>{pct(avg_up)}</div>'
+        )
 
     marks = [
         r.forecast.rating_mark for r in ok if r.forecast and r.forecast.rating_mark is not None
@@ -344,17 +348,17 @@ def kpi_strip(rows: list[TrackedTicker]) -> str:
         when, e = upcoming[0]
         earn_val, earn_note = (
             date_short(when, year=False),
-            f"{escape(e.symbol)} · {escape(e.name or '')}",
+            f"{escape(e.symbol)}, {escape(e.name or '')}",
         )
     else:
         earn_val, earn_note = "—", "No upcoming dates"
 
     return f"""<section class="kpis" aria-label="Summary">
-    <div class="card kpi"><div class="label">Tracked tickers</div><div class="value">{len(rows)}</div>
-      <div class="note">{len(ok)} with data · {pending} pending · {failed} failed</div></div>
-    <div class="card kpi"><div class="label">Avg upside to target</div>{up_html}<div class="note">Mean of analyst average targets</div></div>
-    <div class="card kpi"><div class="label">Rated buy or better</div><div class="value">{bull_html}</div><div class="note">{bull_note}</div></div>
-    <div class="card kpi"><div class="label">Next earnings</div><div class="value">{earn_val}</div><div class="note">{earn_note}</div></div>
+    <div class="kpi lead"><div class="label">Average upside to target</div>{up_html}<div class="note">Mean of analyst average targets</div></div>
+    <div class="kpi"><div class="label">Tracked tickers</div><div class="value">{len(rows)}</div>
+      <div class="note">{len(ok)} with data, {pending} pending, {failed} failed</div></div>
+    <div class="kpi"><div class="label">Rated buy or better</div><div class="value">{bull_html}</div><div class="note">{bull_note}</div></div>
+    <div class="kpi"><div class="label">Next earnings</div><div class="value">{earn_val}</div><div class="note">{earn_note}</div></div>
   </section>"""
 
 
@@ -508,7 +512,7 @@ def gauge(mark: float | None, counts: list[int] | None = None) -> str:
             tx, ty = point((i + 0.5) / 5, r + 17)
             n = counts[i]
             nums.append(
-                f'<text x="{tx:.1f}" y="{ty + 3.5:.1f}" text-anchor="middle" font-family="var(--mono)" font-size="11" '
+                f'<text x="{tx:.1f}" y="{ty + 3.5:.1f}" text-anchor="middle" font-family="var(--sans)" font-size="11" '
                 f'fill="{"var(--fg)" if n else "var(--faint)"}" font-weight="{600 if n else 400}">{n}</text>'
             )
 
@@ -517,7 +521,7 @@ def gauge(mark: float | None, counts: list[int] | None = None) -> str:
         f'<svg viewBox="0 0 220 138" width="100%" style="max-width:280px" role="img" '
         f'aria-label="Consensus {label}, score {mark:.2f} of 5">{"".join(arcs)}{"".join(nums)}'
         f'<circle cx="{x:.1f}" cy="{y:.1f}" r="9" fill="var(--fg)" stroke="var(--surface)" stroke-width="3"/>'
-        f'<text x="110" y="92" text-anchor="middle" font-family="var(--mono)" font-size="18" fill="var(--fg)">{label}</text>'
+        f'<text x="110" y="92" text-anchor="middle" font-family="var(--sans)" font-size="18" fill="var(--fg)">{label}</text>'
         f'<text x="110" y="116" text-anchor="middle" font-size="11" fill="var(--muted)">score {mark:.2f} of 5</text>'
         '<text x="28" y="132" text-anchor="middle" font-size="10" fill="var(--muted)">Strong buy</text>'
         '<text x="192" y="132" text-anchor="middle" font-size="10" fill="var(--muted)">Strong sell</text></svg>'

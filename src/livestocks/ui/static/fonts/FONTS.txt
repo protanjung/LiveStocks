@@ -1,0 +1,2 @@
+Bricolage Grotesque (600, 700) and Instrument Sans (400, 500, 600), Latin subset, via Fontsource.
+Both are licensed under the SIL Open Font License 1.1, the same terms as OFL.txt in this folder.

@@ -10,27 +10,27 @@ from livestocks.domain import Forecast, PriceBar
 from livestocks.ui.components import price_fmt
 
 YEAR_MS = 365 * 86400 * 1000
-MONO = "IBM Plex Mono, monospace"
+MONO = "Instrument Sans, system-ui, sans-serif"
 
 COLORS = {
     True: {
-        "fg": "#e6ebf5",
-        "muted": "#8a97b2",
-        "line": "#243049",
-        "accent": "#6ea0ff",
-        "surface": "#131a28",
-        "pos": "#34c38f",
-        "neg": "#f0616d",
-        "on_accent": "#0c111b",  # text on a coloured label; dark ink reads better on these
+        "fg": "#eceeff",
+        "muted": "#a2a8d6",
+        "line": "#2f3470",
+        "accent": "#f5c04a",
+        "surface": "#181b47",
+        "pos": "#46d9a0",
+        "neg": "#ff7873",
+        "on_accent": "#1a1330",  # text on a coloured label; dark ink reads better on these
     },
     False: {
-        "fg": "#121a2b",
-        "muted": "#5a6781",
-        "line": "#dfe4ee",
-        "accent": "#2e62d9",
+        "fg": "#15173a",
+        "muted": "#565b8c",
+        "line": "#d9dcef",
+        "accent": "#3438b8",
         "surface": "#ffffff",
-        "pos": "#0a7a53",
-        "neg": "#c8323f",
+        "pos": "#07775a",
+        "neg": "#c2303a",
         "on_accent": "#ffffff",
     },
 }

@@ -1,18 +1,17 @@
-"""Head markup for the web UI: self-hosted IBM Plex faces and the app stylesheet.
+"""Head markup for the web UI: self-hosted Bricolage Grotesque and Instrument Sans faces and the app stylesheet.
 The design tokens and component classes live in ui/static/app.css, served from /static.
 FONTS_HEAD declares the font faces, and STYLESHEET_HEAD links the stylesheet; both are injected once per page.
 """
 
 FONT_DIR = "/static/fonts"
 FONT_FACES = (
-    ("IBM Plex Sans", "ibm-plex-sans", 400),
-    ("IBM Plex Sans", "ibm-plex-sans", 500),
-    ("IBM Plex Sans", "ibm-plex-sans", 600),
-    ("IBM Plex Mono", "ibm-plex-mono", 400),
-    ("IBM Plex Mono", "ibm-plex-mono", 500),
-    ("IBM Plex Mono", "ibm-plex-mono", 600),
+    ("Bricolage Grotesque", "bricolage-grotesque", 600),
+    ("Bricolage Grotesque", "bricolage-grotesque", 700),
+    ("Instrument Sans", "instrument-sans", 400),
+    ("Instrument Sans", "instrument-sans", 500),
+    ("Instrument Sans", "instrument-sans", 600),
 )
-PRELOAD_FACES = (("ibm-plex-sans", 400), ("ibm-plex-mono", 400))
+PRELOAD_FACES = (("instrument-sans", 400), ("bricolage-grotesque", 700))
 STYLESHEET = "/static/app.css"
 
 

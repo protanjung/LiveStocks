@@ -93,7 +93,7 @@ def register(deps: Deps) -> None:
             state.day = day
             await body.refresh()
 
-        await shell(deps, state, body.refresh)
+        await shell(deps, state, body.refresh, current="suggestions")
         with T("div").classes("wrap"), T("main"):
             await render_or_notice(body)
         footer(SUGGESTIONS_NOTE)
