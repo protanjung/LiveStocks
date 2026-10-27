@@ -71,8 +71,8 @@ def _row(e: CalendarEntry) -> str:
     href = escape(f"/t/{e.exchange}/{e.symbol}")
     name = escape(e.name or e.symbol)
     return (
-        f'<tr><th><a href="{href}" style="color:var(--accent)">{escape(e.symbol)}</a> '
-        f'<span class="muted">{name}</span></th>'
+        f'<tr><th><a href="{href}" style="color:var(--accent)">{escape(e.symbol)}</a>'
+        f'<span class="muted" style="margin-left:8px">{name}</span></th>'
         f"<td>{date_short(e.ex_date)}</td><td class='r'>{date_short(e.pay_date)}</td>"
         f"<td class='r num'>{_amount(e.amount)}</td><td class='r num'>{_pct(e.yield_pct)}</td></tr>"
     )
@@ -97,4 +97,6 @@ def calendar_sections(entries: list[CalendarEntry]) -> str:
             "<th class='r'>Amount</th><th class='r'>Yield</th>"
             f"</tr></thead><tbody>{body}</tbody></table></div></section>"
         )
-    return "".join(cards)
+    if not cards:
+        return ""
+    return '<div style="display:grid;gap:20px">' + "".join(cards) + "</div>"
