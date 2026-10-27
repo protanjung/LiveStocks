@@ -78,7 +78,7 @@ def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dic
     """
     col = COLORS[dark]
     labels = [short_label(p.label) for p in periods]
-    reported_color = col["accent"] if kind == "eps" else ("#e8b04a" if dark else "#a96f0a")
+    reported_color = col["accent"] if kind == "eps" else ("#ff9d57" if dark else "#a24b08")
     est_color = col["muted"]
     first_forecast = next((i for i, p in enumerate(periods) if not p.reported), None)
 

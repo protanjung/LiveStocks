@@ -68,8 +68,13 @@ class T(ui.element):
 
 
 # ---- shared shell ----
-async def shell(deps: Deps, state: PageState, on_theme: Callable[[], Awaitable[None]]) -> None:
-    """Build the top bar shared by every page and start its status timer.
+async def shell(
+    deps: Deps,
+    state: PageState,
+    on_theme: Callable[[], Awaitable[None]],
+    current: str = "",
+) -> None:
+    """Build the top bar and nav tabs, marking current as the page tab, and start its status timer.
     The theme toggle calls on_theme so the page can redraw its charts in the new palette.
     The add box reads its text in the browser, so a fast type-then-click is not lost.
     """
@@ -102,35 +107,34 @@ async def shell(deps: Deps, state: PageState, on_theme: Callable[[], Awaitable[N
         field.value = ""
 
     with T("header").classes("top"), T("div").classes("wrap"):
-        with T("button").classes("brand").on("click", lambda: ui.navigate.to("/")):
+        with T("a").classes("brand").props('href="/" aria-label="LiveStocks home"'):
             ui.html(
-                '<svg width="30" height="30" viewBox="0 0 30 30" fill="none" aria-hidden="true">'
-                '<rect width="30" height="30" rx="8" fill="var(--accent-soft)"/>'
-                '<path d="M6 21l6-7 4 4 8-10" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
-                '<circle cx="24" cy="8" r="2.3" fill="var(--accent)"/></svg>',
+                '<svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">'
+                '<path d="M3 20l7-8 4.5 4.5L23 5" stroke="var(--mark)" stroke-width="3" '
+                'stroke-linecap="round" stroke-linejoin="round"/>'
+                '<circle cx="22.5" cy="5.5" r="2.5" fill="var(--fg)"/></svg>',
                 sanitize=False,
             )
-            ui.html(
-                "<span>LiveStocks<small>Analyst forecasts</small></span>",
-                sanitize=False,
-                tag="span",
-            )
+            T("span").text = "LiveStocks"
+        with T("nav").classes("nav").props('aria-label="Pages"'):
+            for page, href, label, shown in (
+                ("dashboard", "/", "Dashboard", True),
+                ("suggestions", "/suggestions", "Suggestions", settings.ui_suggestions),
+                ("calendar", "/calendar", "Calendar", settings.ui_calendar),
+            ):
+                if shown:
+                    link = T("a").props(f'href="{href}"')
+                    if page == current:
+                        link.props('aria-current="page"')
+                    link.text = label
         with T("div").classes("add"):
             field = (
-                ui.input(placeholder="Add ticker  ·  TLKM  or  IDX:TLKM")
+                ui.input(placeholder="Add a ticker, e.g. TLKM")
                 .props('borderless dense input-class="add-input" aria-label="Add ticker"')
                 .classes("add-field")
                 .on("keydown.enter", add)
             )
             T("button").classes("btn").on("click", add).text = "Add"
-        if settings.ui_suggestions:
-            T("button").classes("btn ghost").on(
-                "click", lambda: ui.navigate.to("/suggestions")
-            ).text = "Suggestions"
-        if settings.ui_calendar:
-            T("button").classes("btn ghost").on(
-                "click", lambda: ui.navigate.to("/calendar")
-            ).text = "Calendar"
         with T("div").classes("status").props('aria-live="polite"'):
             dot = T("span").classes("dot")
             status = ui.label()

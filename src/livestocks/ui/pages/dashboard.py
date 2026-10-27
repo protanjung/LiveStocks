@@ -112,7 +112,7 @@ def register(deps: Deps) -> None:
 
         def table(rows: list[TrackedTicker]) -> None:
             legend = (
-                '<div class="card-body"><div class="legend">'
+                '<div class="card-body legend-row"><div class="legend">'
                 '<span><i class="sw px"></i>Price</span>'
                 '<span><i class="sw avg"></i>Avg target</span>'
                 '<span><i class="sw span"></i>Low to high target</span></div></div>'
@@ -120,7 +120,7 @@ def register(deps: Deps) -> None:
             table_html = c.forecast_table(
                 rows, state.sort_key, state.sort_dir, service.fetching(), int(time.time())
             )
-            body_html = f'{legend}<div class="tablewrap mt-8">{table_html}</div>'
+            body_html = f'{legend}<div class="tablewrap">{table_html}</div>'
             ui.html(
                 card("Forecast table", body_html, label="Tracked tickers", padded=False),
                 sanitize=False,
@@ -129,7 +129,7 @@ def register(deps: Deps) -> None:
         async def theme_changed() -> None:
             await body.refresh()
 
-        await shell(deps, state, theme_changed)
+        await shell(deps, state, theme_changed, current="dashboard")
         with T("div").classes("wrap"), T("main"):
             await render_or_notice(body)
         footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))

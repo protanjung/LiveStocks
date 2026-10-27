@@ -201,7 +201,7 @@ def register(deps: Deps) -> None:
                     )
                     ui.html(fin_table(periods, kind), sanitize=False)
 
-        await shell(deps, state, body.refresh)
+        await shell(deps, state, body.refresh, current="dashboard")
         with T("div").classes("wrap"), T("main"):
             await render_or_notice(body)
         footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))
