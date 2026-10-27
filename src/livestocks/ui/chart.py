@@ -107,7 +107,7 @@ def _target_line(
     col: dict,
     position: str = "top",
 ) -> list[dict]:
-    pct = (target / price - 1) * 100
+    pct = (target / price - 1) * 100 if price else 0.0
     line = {
         "name": name,
         "type": "line",

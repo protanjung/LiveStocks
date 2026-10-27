@@ -3,6 +3,7 @@ Class names come from ui/static/app.css and every dynamic string is escaped here
 No function in this module performs I/O or touches NiceGUI.
 """
 
+import math
 import time
 from datetime import datetime
 from html import escape
@@ -13,10 +14,12 @@ from livestocks.domain import Forecast, TrackedTicker, rating_label
 # ---- formatting ----
 def fmt(v: float | None, d: int = 0) -> str:
     """Format a number with thousands separators and d decimals.
-    None becomes an em dash so tables never show the word None.
+    None and non-finite values become an em dash so tables never show None, nan or inf.
     Used for counts and other plain numbers.
     """
-    return "—" if v is None else f"{v:,.{d}f}"
+    if v is None or not math.isfinite(v):
+        return "—"
+    return f"{v:,.{d}f}"
 
 
 def price_fmt(v: float | None) -> str:
@@ -24,7 +27,7 @@ def price_fmt(v: float | None) -> str:
     So IDX prices read 2,310 while a US price reads 333.63.
     None becomes an em dash.
     """
-    if v is None:
+    if v is None or not math.isfinite(v):
         return "—"
     return fmt(v, 2 if abs(v) < 1000 and v != int(v) else 0)
 
@@ -52,7 +55,8 @@ def ago(ts: int | None, now: int | None = None) -> str:
     """
     if ts is None:
         return "—"
-    s = max(0, (now or int(time.time())) - ts)
+    clock = now if now is not None else int(time.time())
+    s = max(0, clock - ts)
     if s < 60:
         return "just now"
     if s < 3600:
@@ -84,7 +88,10 @@ def date_short(ts: int | None, year: bool = True) -> str:
     """
     if not ts:
         return "—"
-    d = datetime.fromtimestamp(ts)
+    try:
+        d = datetime.fromtimestamp(ts)
+    except (OverflowError, OSError, ValueError):
+        return "—"
     return f"{d.day} {d:%b %Y}" if year else f"{d.day} {d:%b}"
 
 
@@ -287,9 +294,12 @@ def big_range(f: Forecast) -> str:
     Shows a note instead when any of the four values is missing.
     """
     low, high, avg, price = f.pt_low, f.pt_high, f.pt_avg, f.price
-    if low is None or high is None or avg is None or price is None:
-        return '<p class="muted">Price target range unavailable for this ticker.</p>'
+    note = '<p class="muted">Price target range unavailable for this ticker.</p>'
+    if low is None or high is None or avg is None or not price:
+        return note
     lo, hi = min(low, price) * 0.97, max(high, price) * 1.03
+    if hi <= lo:
+        return note
 
     def p(x: float) -> float:
         return (x - lo) / (hi - lo) * 100

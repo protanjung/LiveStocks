@@ -73,7 +73,9 @@ def register(
     """
 
     def tv_url(r: TrackedTicker) -> str:
-        return f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
+        return escape(
+            f"https://www.tradingview.com/symbols/{r.exchange}-{r.symbol}/forecast-price-target/"
+        )
 
     # ---- shared shell ----
     async def shell(state: PageState, on_theme: Callable[[], Awaitable[None]]) -> None:

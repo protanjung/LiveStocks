@@ -82,13 +82,13 @@ def when(iso: str | None) -> str:
 
 def day_label(date: str) -> str:
     """Format a YYYY-MM-DD trading date as 'Mon 12 Oct'.
-    Text that is not a date is returned escaped and unchanged.
-    Used on the date buttons of the suggestions page.
+    Text that is not a date is returned unchanged, as plain text rather than HTML.
+    Callers escape the result when they put it in markup, so the labels never double-escape.
     """
     try:
         d = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
     except ValueError:
-        return escape(date)
+        return date
     return f"{d:%a} {d.day} {d:%b}"
 
 
@@ -166,11 +166,21 @@ def _entry_of(row: dict[str, Any]) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
+def _lots_of(row: dict[str, Any]) -> int | None:
+    """Return the lot count when it is a positive whole number, otherwise None.
+    Booleans are rejected because bool is a subclass of int, so True would read as one lot.
+    """
+    lots = row.get("lots")
+    if isinstance(lots, bool) or not isinstance(lots, int) or lots <= 0:
+        return None
+    return lots
+
+
 def _cost(row: dict[str, Any]) -> str:
     """Estimated order value in rupiah: lots x 100 shares x entry price. Empty when unknown."""
-    entry, lots = _entry_of(row), row.get("lots")
+    entry, lots = _entry_of(row), _lots_of(row)
     price = entry.get("price")
-    if not (_num(price) and isinstance(lots, int) and lots > 0):
+    if not (_num(price) and lots):
         return ""
     return f"≈ Rp {price * lots * 100:,.0f}"
 
@@ -227,7 +237,7 @@ def stock_card(row: dict[str, Any], closes: Sequence[float] | None = None) -> st
     tone = TONES.get(action, "")
     ticker = escape(str(row.get("ticker", "?")))
     name = escape(str(row.get("name", "")))
-    lots = row.get("lots")
+    lots = _lots_of(row)
     entry = _entry_of(row)
     zone = (
         f"{_price(entry.get('low'))} – {_price(entry.get('high'))}"
@@ -244,7 +254,7 @@ def stock_card(row: dict[str, Any], closes: Sequence[float] | None = None) -> st
         + (f'<span class="chip">weight after {weight:.1f}%</span>' if _num(weight) else "")
     )
     has_levels = any(_num(v) for v in (entry.get("price"), row.get("stop"), row.get("tp1")))
-    show_lots = action != "HOLD" and isinstance(lots, int)
+    show_lots = action != "HOLD" and lots is not None
     metrics = (
         '<div class="sug-metrics">'
         + "".join(
@@ -328,7 +338,7 @@ def dashboard_card(
     return (
         '<section class="card sug-dash" aria-label="Daily suggestions">'
         '<div class="card-head"><h2>Daily suggestions</h2>'
-        f'<span class="sub">{day_label(date)} · stored {ago(received_at, now)}</span>'
+        f'<span class="sub">{escape(day_label(date))} · stored {ago(received_at, now)}</span>'
         '<a class="btn ghost fine" style="text-decoration:none" href="/suggestions">All suggestions →</a></div>'
         '<div class="card-body sug-head">'
         f'<div class="sug-chips">{ihsg_html}{count_chips(action_counts(items))}</div>'

@@ -8,6 +8,10 @@ from html import escape
 from livestocks.domain import Period
 from livestocks.ui.chart import COLORS, MONO
 
+_ESCAPE_JS = (
+    "const esc = (s) => String(s).replace(/[&<>\"']/g, (ch) => "
+    "({'&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;'})[ch]);"
+)
 _COMPACT_JS = (
     "const c = (v) => { const a = Math.abs(v);"
     " return a >= 1e12 ? (v / 1e12).toFixed(2) + ' T' : a >= 1e9 ? (v / 1e9).toFixed(2) + ' B'"
@@ -127,9 +131,9 @@ def financial_options(periods: tuple[Period, ...], kind: str, dark: bool) -> dic
                 const a = by['Reported'], e = by['Estimate'];
                 const s = (a != null && e) ? ((a - e) / Math.abs(e) * 100) : null;
                 const row = (k, v) => `<div>${k} <b style="float:right;margin-left:16px">${v == null ? '—' : c(v)}</b></div>`;
-                return `<div style="opacity:.7;margin-bottom:4px">${ps[0].axisValue}</div>` + row('Reported', a) + row('Estimate', e)
+                return `<div style="opacity:.7;margin-bottom:4px">${esc(ps[0].axisValue)}</div>` + row('Reported', a) + row('Estimate', e)
                     + (s == null ? '' : `<div>Surprise <b style="float:right;margin-left:16px">${s >= 0 ? '+' : '−'}${Math.abs(s).toFixed(2)}%</b></div>`);
-            }""".replace("__COMPACT__", _COMPACT_JS),
+            }""".replace("__COMPACT__", _ESCAPE_JS + _COMPACT_JS),
         },
         "xAxis": {
             "type": "category",
