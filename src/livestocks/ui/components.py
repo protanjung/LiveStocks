@@ -86,6 +86,15 @@ def duration(seconds: int | None) -> str:
     return f"{h}h {m:02d}m" if h else f"{m}m"
 
 
+def interval_text(seconds: int) -> str:
+    """Describe a refresh interval in whole hours, as 'hour' or '6 hours'. Never less than one hour.
+    Used in page footers, so the grammar matches the number.
+    Intervals are rounded to whole hours, so 5400 seconds reads as two hours.
+    """
+    hours = max(1, round(seconds / 3600))
+    return "hour" if hours == 1 else f"{hours} hours"
+
+
 def date_short(ts: int | None, year: bool = True) -> str:
     """Format a unix timestamp as '29 Oct 2026', optionally without the year.
     None or zero gives a dash.

@@ -28,6 +28,7 @@ from livestocks.ui import suggestions as s
 from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
+from livestocks.ui.live import guarded, render_or_notice
 from livestocks.ui.models import PageState
 from livestocks.ui.primitives import card, crumb, empty_card, page_title
 from livestocks.ui.seasonals import seasonal_options, seasonal_returns
@@ -59,6 +60,18 @@ class T(ui.element):
 
 SPARK_DAYS = 90
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 2 * 365 * 86400}
+
+
+DASHBOARD_NOTE = (
+    "Source: TradingView analyst forecasts. Refreshed every {interval}. Not investment advice."
+)
+SUGGESTIONS_NOTE = (
+    "Source: daily suggestions from the scheduled Claude routine. Not investment advice."
+)
+CALENDAR_NOTE = (
+    "Source: TradingView scanner. Dates can change before payment; check the issuer. "
+    "Not investment advice."
+)
 
 
 # Runs in the browser: one listener handles sort, retry, remove and row navigation.
@@ -178,13 +191,13 @@ def register(
                 )
 
         await tick()
-        ui.timer(2.0, tick)
+        ui.timer(2.0, guarded("header status", tick))
 
     def new_state() -> PageState:
         return PageState(dark=app.storage.user.get("dark", True))
 
     # ---- dashboard ----
-    @ui.page("/")
+    @ui.page("/", title="Dashboard · LiveStocks")
     async def index() -> None:
         state = new_state()
 
@@ -283,17 +296,17 @@ def register(
 
         await shell(state, theme_changed)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))
 
         async def maybe_refresh() -> None:
             if await sig() != last["sig"]:
                 await body.refresh()
 
-        ui.timer(3.0, maybe_refresh)
+        ui.timer(3.0, guarded("dashboard refresh", maybe_refresh))
 
     # ---- detail ----
-    @ui.page("/t/{exchange}/{symbol}")
+    @ui.page("/t/{exchange}/{symbol}", title="Ticker · LiveStocks")
     async def detail(exchange: str, symbol: str) -> None:
         tid = TickerId(exchange.upper(), symbol.upper())
         state = new_state()
@@ -460,17 +473,17 @@ def register(
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(DASHBOARD_NOTE.format(interval=c.interval_text(settings.refresh_interval)))
 
         async def maybe_refresh() -> None:
             if sig_of(await service.get_ticker(tid)) != last["sig"]:
                 await body.refresh()
 
-        ui.timer(3.0, maybe_refresh)
+        ui.timer(3.0, guarded("ticker refresh", maybe_refresh))
 
     # ---- suggestions ----
-    @ui.page("/suggestions")
+    @ui.page("/suggestions", title="Suggestions · LiveStocks")
     async def suggestions_page() -> None:
         state = new_state()
         last: dict[str, Any] = {"sig": None}
@@ -482,10 +495,15 @@ def register(
             exchange = settings.default_exchange.upper()
             since = int(time.time()) - SPARK_DAYS * 86400
             tickers = sorted({str(r["ticker"]) for r in items if r.get("ticker")})
-            bars = await asyncio.gather(
-                *(service.price_history(TickerId(exchange, t), since) for t in tickers)
+            results = await asyncio.gather(
+                *(service.price_history(TickerId(exchange, t), since) for t in tickers),
+                return_exceptions=True,
             )
-            return {t: [b.close for b in bs] for t, bs in zip(tickers, bars, strict=True)}
+            closes: dict[str, list[float]] = {}
+            for t, result in zip(tickers, results, strict=True):
+                # One ticker with no history must not blank the whole suggestions page.
+                closes[t] = [] if isinstance(result, BaseException) else [b.close for b in result]
+            return closes
 
         @ui.refreshable
         async def body() -> None:
@@ -530,18 +548,18 @@ def register(
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(SUGGESTIONS_NOTE)
 
         async def maybe_refresh() -> None:
             reports = await suggestions.recent(14) if settings.ui_suggestions else []
             if sig_of(reports) != last["sig"]:
                 await body.refresh()
 
-        ui.timer(15.0, maybe_refresh)
+        ui.timer(15.0, guarded("suggestions refresh", maybe_refresh))
 
     # ---- dividend calendar ----
-    @ui.page("/calendar")
+    @ui.page("/calendar", title="Calendar · LiveStocks")
     async def calendar_page() -> None:
         state = new_state()
         last: dict[str, Any] = {"sig": None}
@@ -616,20 +634,15 @@ def register(
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
-            await body()
-        footer()
+            await render_or_notice(body)
+        footer(CALENDAR_NOTE)
 
         async def maybe_refresh() -> None:
             entries, _ = await load()
             if sig_of(entries) != last["sig"]:
                 await body.refresh()
 
-        ui.timer(60.0, maybe_refresh)
+        ui.timer(60.0, guarded("calendar refresh", maybe_refresh))
 
-    def footer() -> None:
-        ui.html(
-            "<span>Source: TradingView analyst forecasts. Refreshed every "
-            f"{max(1, settings.refresh_interval // 3600)} hours. Not investment advice.</span>",
-            sanitize=False,
-            tag="footer",
-        ).classes("wrap foot")
+    def footer(note: str) -> None:
+        ui.html(f"<span>{escape(note)}</span>", sanitize=False, tag="footer").classes("wrap foot")
