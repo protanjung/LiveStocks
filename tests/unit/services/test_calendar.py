@@ -55,14 +55,62 @@ class TestCalendarCache:
         assert calls == ["IDX"]
         await service.close()
 
-    async def test_expired_cache_is_fetched_again(self, fetch, traps):
+    async def test_expired_cache_is_fetched_again_in_the_background(self, fetch, traps):
         calls, _ = fetch
         service = CalendarService(Settings(calendar_ttl=0))
 
         await service.entries("IDX")
         await service.entries("IDX")
+        await service._refresh_tasks["IDX"]
 
         assert calls == ["IDX", "IDX"]
+        await service.close()
+
+    async def test_expired_rows_are_served_at_once_while_the_refresh_runs(self, fetch, traps):
+        calls, state = fetch
+        service = CalendarService(Settings(calendar_ttl=0))
+        await service.entries("IDX")
+        gate = asyncio.Event()
+
+        async def slow(client, exchange, now=None):
+            calls.append(exchange)
+            await gate.wait()
+            return state["rows"]
+
+        import livestocks.services.calendar as module
+
+        original = module.fetch_calendar
+        module.fetch_calendar = slow
+        try:
+            rows = await asyncio.wait_for(service.entries("IDX"), timeout=1)
+        finally:
+            gate.set()
+            await service._refresh_tasks["IDX"]
+            module.fetch_calendar = original
+
+        assert [e.symbol for e in rows] == ["SIDO"]
+        await service.close()
+
+    async def test_warm_loads_the_calendar_before_anyone_asks(self, fetch, traps):
+        calls, _ = fetch
+        service = CalendarService(Settings())
+
+        service.warm("idx")
+        await service._warm_task
+        await service.entries("IDX")
+
+        assert calls == ["IDX"]
+        await service.close()
+
+    async def test_warm_failure_is_swallowed(self, fetch, traps):
+        _, state = fetch
+        state["error"] = UpstreamError("scanner down")
+        service = CalendarService(Settings())
+
+        service.warm("IDX")
+        await service._warm_task
+
+        assert service._warm_task.exception() is None
         await service.close()
 
     async def test_failed_refresh_serves_the_previous_rows(self, fetch, traps):

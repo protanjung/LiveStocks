@@ -149,12 +149,12 @@ def _marks(e: CalendarEntry) -> list[tuple[str, str, str, int, bool]]:
 
 
 def _lane(e: CalendarEntry, start: float) -> str:
-    """Return the timeline of one row: a bar over the holding window and a dot per date.
-    Positions are days from today across the six-week window; dates outside it sit at its edge.
-    Dots that would overlap are nudged sideways, and an Ex Date already behind us is noted in words.
+    """Return the timeline of one row: a bar over the holding window and a dot per upcoming date.
+    Positions are days from today across the six-week window; dates past it sit at its edge.
+    Dates already behind us are not drawn, only noted in words, and close dots are nudged apart.
     """
     span = WINDOW_DAYS * 86400
-    marks = sorted(_marks(e), key=lambda m: m[3])
+    marks = sorted((m for m in _marks(e) if m[3] >= start), key=lambda m: m[3])
     dots: list[str] = []
     previous, shift = -100.0, 0
     for letter, cls, term, ts, est in marks:

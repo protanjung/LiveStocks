@@ -192,6 +192,13 @@ class TestHuntTable:
 
         assert "Ex passed" in html
 
+    def test_dates_already_past_are_not_drawn_as_dots(self):
+        html = self._html(
+            _entry(ex_date=_ts(10, 20), cum_date=_ts(10, 19), record_date=_ts(10, 21))
+        )
+
+        assert html.count('class="hdot') == 1  # only the upcoming Payment Date
+
     def test_a_date_beyond_the_window_stays_inside_the_lane(self):
         html = self._html(_entry(pay_date=_ts(12, 30)))
 

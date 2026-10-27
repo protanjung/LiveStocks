@@ -1,6 +1,6 @@
 """Serves the market dividend calendar, cached so visitors do not each query the scanner.
 The calendar is cached per exchange for calendar_ttl seconds, Ex Date history for trap_ttl.
-History is fetched in the background, so the calendar is served at once and gains trap stats later.
+An expired calendar is served as it is while a refresh runs in the background, so nobody waits.
 """
 
 import asyncio
@@ -21,7 +21,7 @@ TRAP_RETRY = 900.0  # seconds before a failed or empty trap lookup is tried agai
 
 class CalendarService:
     """Return the dividend calendar of an exchange, refreshing it at most once per TTL.
-    A single lock stops concurrent visitors from starting duplicate scans.
+    Only the very first load waits for the scan; later refreshes run in the background.
     Rows gain their Ex Date trap statistics as the background fill completes.
     """
 
@@ -34,10 +34,22 @@ class CalendarService:
         self._traps: dict[str, tuple[float, TrapStats | None]] = {}
         self._lock = asyncio.Lock()
         self._fill_task: asyncio.Task[None] | None = None
+        self._refresh_tasks: dict[str, asyncio.Task[None]] = {}
+        self._warm_task: asyncio.Task[None] | None = None
+
+    def warm(self, exchange: str) -> None:
+        """Start loading an exchange's calendar in the background, ahead of the first visitor.
+        Failures are logged and ignored; the first visit then loads it the usual way.
+        Calling it again while a warm-up runs, or once the calendar is cached, does nothing.
+        """
+        key = exchange.upper()
+        if key in self._cache or (self._warm_task is not None and not self._warm_task.done()):
+            return
+        self._warm_task = asyncio.create_task(self._warm(key))
 
     async def entries(self, exchange: str) -> list[CalendarEntry]:
-        """Return the calendar rows of an exchange, fetching them when the cache is stale.
-        Raises CalendarUnavailableError when the scan fails and nothing is cached yet.
+        """Return the calendar rows of an exchange, waiting for the scan only on the first load.
+        Raises CalendarUnavailableError when the first scan fails and nothing is cached yet.
         Rows carry the trap statistics known so far; the rest are fetched in the background.
         """
         rows = await self._rows(exchange.upper())
@@ -45,36 +57,63 @@ class CalendarService:
         return [self._with_trap(e) for e in rows]
 
     async def close(self) -> None:
-        """Stop the background fill and close the HTTP client held by the service.
+        """Stop the background work and close the HTTP client held by the service.
         Call it once at shutdown, after the pages have stopped asking for data.
         Closing twice is harmless because httpx ignores a second close.
         """
-        task = self._fill_task
-        if task is not None and not task.done():
+        tasks = [self._fill_task, self._warm_task, *self._refresh_tasks.values()]
+        running = [t for t in tasks if t is not None and not t.done()]
+        for task in running:
             task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
+        await asyncio.gather(*running, return_exceptions=True)
         await self._client.aclose()
 
+    async def _warm(self, key: str) -> None:
+        """Load one exchange's calendar and let the trap fill start, logging any failure."""
+        try:
+            await self.entries(key)
+        except CalendarUnavailableError as e:
+            logger.warning("calendar warm-up failed: {}", e)
+
     async def _rows(self, key: str) -> list[CalendarEntry]:
-        """Return the cached scan rows of an exchange, running the scan when they are stale."""
+        """Return the scan rows: fresh, else stale while refreshing, else wait for a first load."""
         cached = self._fresh(key)
         if cached is not None:
             return cached
+        stale = self._cache.get(key)
+        if stale is not None:
+            self._refresh_in_background(key)
+            return stale[1]
         async with self._lock:
             cached = self._fresh(key)
             if cached is not None:
                 return cached
-            previous = self._cache.get(key)
             try:
                 rows = await fetch_calendar(self._client, key)
             except (UpstreamError, ParseError) as e:
-                if previous is not None:
-                    return previous[1]
                 raise CalendarUnavailableError(
                     "the dividend calendar is unavailable right now"
                 ) from e
             self._cache[key] = (time.monotonic(), rows)
             return rows
+
+    def _refresh_in_background(self, key: str) -> None:
+        """Start a refresh of an exchange's calendar unless one is already running."""
+        running = self._refresh_tasks.get(key)
+        if running is None or running.done():
+            self._refresh_tasks[key] = asyncio.create_task(self._refresh(key))
+
+    async def _refresh(self, key: str) -> None:
+        """Fetch the calendar again and replace the cache; on failure keep serving the old rows."""
+        async with self._lock:
+            if self._fresh(key) is not None:
+                return
+            try:
+                rows = await fetch_calendar(self._client, key)
+            except (UpstreamError, ParseError) as e:
+                logger.debug("calendar refresh failed: {}", e)
+                return
+            self._cache[key] = (time.monotonic(), rows)
 
     def _fresh(self, key: str) -> list[CalendarEntry] | None:
         """Return the cached rows of an exchange while they are within the TTL, else None."""
