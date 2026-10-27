@@ -49,7 +49,7 @@ uv run pre-commit install    # run the checks on every commit
 - **Logging.** loguru's `logger`, with context bound as fields (`logger.bind(ticker=key)`). No `print`, no direct use of the
   standard `logging` module except in `logging_config.py`.
 - **Tests.** Plain pytest inside `Test*` classes named after the unit under test, methods named
-  `test_<behaviour>_<condition>`. Shared fixtures live in `tests/conftest.py`. The test tree mirrors `src/`. The NiceGUI page wiring in `ui/pages.py` is the main gap: it needs a browser, so it is
+  `test_<behaviour>_<condition>`. Shared fixtures live in `tests/conftest.py`. The test tree mirrors `src/`. The NiceGUI page wiring in `ui/pages/` is the main gap: it needs a browser, so it is
   checked by hand and through the pure builders in `ui/components.py`, which are unit-tested.
 
 ## Changing the database schema
@@ -84,7 +84,7 @@ The architecture test fails until the three fixed files exist.
 
 ## Web UI structure
 
-The pages live in `ui/pages.py` inside one `register()` call. Shared HTML lives in pure builder modules: `components`
+The pages live in `ui/pages/`: one module per page (`dashboard`, `detail`, `suggestions_page`, `calendar_page`), shared pieces in `common`, and `register()` in `__init__` wiring them to one `Deps` bundle. Shared HTML lives in pure builder modules: `components`
 (dashboard pieces, the sortable forecast table), `dividends` (dividend card and calendar), `suggestions`, `chart`,
 `financials`, `seasonals`, `primitives` (cards, crumbs, empty states, table headers) and `live` (guards for timers and
 first renders). Each builder escapes its text and is unit-tested without NiceGUI.
