@@ -263,6 +263,48 @@ td.r .act { margin-left: 2px; }
   .cal-agenda { display: block; }
 }
 
+/* dividend hunting */
+.hunt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.hunt-filters { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+.fchip { background: var(--surface); color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; font-size: 12px; }
+.fchip[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.linkish { background: none; border: 0; padding: 0; color: var(--fg); font: inherit; text-align: left; }
+.linkish:hover { color: var(--accent); text-decoration: underline; }
+.hunt-table { table-layout: fixed; min-width: 1040px; width: 100%; }
+.hunt-table tbody th { position: static; background: var(--surface); text-align: left; text-transform: none; letter-spacing: normal; font-size: 13px; font-weight: 500; color: var(--fg); white-space: normal; }
+.hunt-table tbody th .trunc { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.hunt-table th.tl, .hunt-table td.tl { padding: 0 10px; }
+.hrow.sel { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--accent); }
+.hrow.sel th { background: var(--surface-2); }
+.hweeks { display: grid; grid-template-columns: repeat(6, 1fr); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.hlane { position: relative; height: 46px; }
+.hbar { position: absolute; top: 21px; height: 4px; border-radius: 2px; background: var(--track); }
+.hnote { position: absolute; left: 0; top: 0; font-size: 11px; color: var(--muted); }
+.hdot { position: absolute; top: 14px; width: 18px; height: 18px; border-radius: 50%; font-size: 10px; font-weight: 600; display: grid; place-items: center; color: var(--on-accent); font-family: var(--mono); }
+.hdot.cum { background: var(--accent); } .hdot.ex { background: var(--pos); } .hdot.rec { background: var(--muted); } .hdot.pay { background: var(--warn); }
+.hunt-empty { margin: 0; padding: 24px 16px; }
+.hunt-detail { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.hd-card { padding: 14px 16px; }
+.hd-card h2 { margin: 0 0 8px; }
+.hd-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.hd-head h2 { margin: 0; font-size: 18px; }
+.hd-score { margin-left: auto; font-family: var(--mono); }
+.hd-dates { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0 0 10px; font-size: 13px; }
+.hd-dates dt { color: var(--muted); }
+.hd-dates dd { margin: 0; }
+.hd-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 13px; }
+.chk-mark { display: inline-block; min-width: 58px; margin-right: 6px; font-family: var(--mono); font-size: 12px; }
+.chk.pass .chk-mark { color: var(--pos); } .chk.warn .chk-mark { color: var(--warn); } .chk.fail .chk-mark { color: var(--neg); } .chk.na .chk-mark { color: var(--muted); }
+.hd-trap { min-width: 0; width: 100%; font-size: 12px; }
+.hd-trap th, .hd-trap td { padding: 5px 6px; }
+.hd-note { margin: 8px 0 0; font-size: 12px; }
+.howto summary { cursor: pointer; padding: 14px 16px; font-weight: 600; }
+.howto-body { padding: 0 16px 16px; max-width: 90ch; font-size: 13px; line-height: 1.6; }
+.howto-body h3 { margin: 16px 0 6px; font-size: 14px; }
+.howto-body p, .howto-body ul, .howto-body ol { margin: 0 0 8px; }
+.howto-body li { margin: 2px 0; }
+@media (max-width: 900px) { .hunt-detail { grid-template-columns: minmax(0, 1fr); } }
+
 /* touch targets: 44px on coarse pointers */
 @media (pointer: coarse) {
   .act, .seg button, th button, .crumb button, .btn, .btn.fine { min-height: 44px; min-width: 44px; }

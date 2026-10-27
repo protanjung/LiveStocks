@@ -179,7 +179,7 @@ async def _with_record_dates(entries: list[CalendarEntry]) -> list[CalendarEntry
                 logger.debug("recording date unavailable for {}: {}", entry.symbol, e)
                 return entry
         record = _record_for(raw, entry.ex_date)
-        return entry if record is None else replace(entry, record_date=record)
+        return entry if record is None else replace(entry, record_date=record, record_real=True)
 
     return list(await asyncio.gather(*(one(e) for e in entries)))
 

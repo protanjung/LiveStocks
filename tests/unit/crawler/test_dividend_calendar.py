@@ -202,6 +202,7 @@ class TestRecordLookup:
         result = await dividend_calendar._with_record_dates([entry])
 
         assert result[0].record_date == NOW + 86400 * 2
+        assert result[0].record_real
 
     async def test_failed_lookup_keeps_the_derived_record_date(self):
         entry = _with_derived_dates(
@@ -211,6 +212,7 @@ class TestRecordLookup:
         result = await dividend_calendar._with_record_dates([entry])
 
         assert result[0].record_date == entry.record_date
+        assert not result[0].record_real
 
     async def test_lookups_never_exceed_the_concurrency_limit(self, monkeypatch):
         running = 0

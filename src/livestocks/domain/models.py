@@ -280,7 +280,8 @@ class CalendarEntry:
     streak_years: int | None = None  # years in a row the company has paid a dividend
     growth_years: int | None = None  # years in a row the dividend has grown
     coverage: float | None = None  # cash dividend coverage ratio
-    trap: "TrapStats | None" = None
+    trap: TrapStats | None = None
+    record_real: bool = False  # True when record_date came from the feed, not derived
 
     @property
     def event_yield(self) -> float | None:
