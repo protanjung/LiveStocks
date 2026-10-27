@@ -66,7 +66,7 @@ class TestSuggestionValues:
         assert _cost({"entry": {"price": 1000}, "lots": True}) == ""
 
     def test_whole_lots_price_the_order(self):
-        assert _cost({"entry": {"price": 1000}, "lots": 2}) == "≈ Rp 200,000"
+        assert _cost({"entry": {"price": 1000}, "lots": 2}) == "≈ IDR 200,000"
 
     def test_day_label_returns_plain_text_for_non_dates(self):
         assert day_label("not-a-date") == "not-a-date"

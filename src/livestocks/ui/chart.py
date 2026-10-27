@@ -117,7 +117,7 @@ def _target_line(
         "data": [[t0, price], [t1, target]],
         "lineStyle": {"color": color, "width": 1.5, "type": [2, 3]},
     }
-    return [line, _pill_series(f"{name} {pct:+.1f}%", t1, target, color, col, position)]
+    return [line, _pill_series(f"{name} {pct:+.2f}%", t1, target, color, col, position)]
 
 
 def forecast_options(bars: Sequence[PriceBar], f: Forecast, dark: bool, now_ms: int) -> dict:

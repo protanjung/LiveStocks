@@ -59,7 +59,7 @@ def dividend_card(d: Dividend, now: int) -> str:
     rows = [
         ("Next ex-date", upcoming),
         ("Next payment", date_short(d.next_pay)),
-        ("Next amount", _amount(d.next_amount)),
+        ("Next amount (IDR)", _amount(d.next_amount)),
         ("Last paid", f"{date_short(d.last_pay)} · {_amount(d.last_amount)}"),
         ("Yield", _pct(d.yield_pct)),
     ]
@@ -75,7 +75,7 @@ def dividend_card(d: Dividend, now: int) -> str:
     )
     table = (
         '<div class="tablewrap fin" style="margin-top:12px"><table class="fintable"><thead><tr>'
-        "<th>Ex-date</th><th class='r'>Paid</th><th class='r'>Amount</th><th class='r'>Type</th>"
+        "<th>Ex-date</th><th class='r'>Paid</th><th class='r'>Amount (IDR)</th><th class='r'>Type</th>"
         f"</tr></thead><tbody>{history}</tbody></table></div>"
         if history
         else ""
@@ -114,7 +114,7 @@ def calendar_sections(entries: list[CalendarEntry]) -> str:
             f'<div class="tablewrap"><table class="fintable" style="{_TABLE}">'
             f"<colgroup>{cols}</colgroup><thead><tr>"
             f"{th('Ticker')}{th('Ex-date')}{th('Pay date', classes='r')}"
-            f"{th('Amount', classes='r')}{th('Yield', classes='r')}"
+            f"{th('Amount (IDR)', classes='r')}{th('Yield', classes='r')}"
             f"</tr></thead><tbody>{body}</tbody></table></div>"
         )
         cards.append(card(title, table, sub=f"{len(rows)} · {note}", label=title, padded=False))

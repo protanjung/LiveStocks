@@ -32,12 +32,15 @@ def price_fmt(v: float | None) -> str:
     return fmt(v, 2 if abs(v) < 1000 and v != int(v) else 0)
 
 
+CURRENCY = "IDR"  # display currency for amounts; prices are quoted in it on IDX
+
+
 def pct(v: float) -> str:
-    """Format a fraction as a signed percentage with one decimal.
+    """Format a fraction as a signed percentage with two decimals.
     Negative values use a true minus sign (-4.2%), positive ones a plus sign.
     Pair it with arrow() to build the up and down chips.
     """
-    return f"{'+' if v >= 0 else '−'}{abs(v) * 100:.1f}%"
+    return f"{'+' if v >= 0 else '−'}{abs(v) * 100:.2f}%"
 
 
 def arrow(v: float) -> str:
