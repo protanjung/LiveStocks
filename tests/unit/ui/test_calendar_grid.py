@@ -84,10 +84,46 @@ class TestMonthAgenda:
 
         assert '<ol class="cal-agenda">' in html
         assert '<time datetime="2026-11-03">' in html
-        assert html.count('<li class="cal-day-row">') == 1
+        # Ex Date plus the derived Cum Date (day before) and Recording Date (day after): three days
+        assert html.count('<li class="cal-day-row">') == 3
 
     def test_legend_explains_both_chips(self):
         html = month_grid([], 2026, 11, date(2026, 10, 27))
 
-        assert "ex-date, the price adjusts" in html
-        assert "payout date" in html
+        assert "Cum Date" in html
+        assert "Ex Date" in html
+        assert "Recording Date" in html
+        assert "Payment Date" in html
+
+
+class TestTradingDaysOnly:
+    def test_grid_has_five_weekday_headers_and_no_weekend_cells(self):
+        marks = [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)]
+
+        grid = month_grid(marks, 2026, 11, date(2026, 10, 27))
+
+        assert grid.count('class="cal-head"') == 5
+
+    def test_weekend_payment_date_is_named_below_the_grid(self):
+        saturday = _ts(2026, 11, 7)  # a Saturday
+        html = month_grid([_entry("SIDO", ex=None, pay=saturday)], 2026, 11, date(2026, 10, 27))
+
+        assert "Also on a weekend" in html
+        assert "Sat 07 Nov" in html
+        assert "PAY SIDO" in html
+
+    def test_no_weekend_note_when_every_date_is_a_trading_day(self):
+        html = month_grid(
+            [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)], 2026, 11, date(2026, 10, 27)
+        )
+
+        assert "Also on a weekend" not in html
+
+    def test_chips_carry_the_full_term_in_their_tooltip(self):
+        html = month_grid(
+            [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)], 2026, 11, date(2026, 10, 27)
+        )
+
+        assert 'title="Ex Date · SIDO"' in html
+        assert 'title="Recording Date · SIDO"' in html
+        assert 'title="Cum Date · SIDO"' in html

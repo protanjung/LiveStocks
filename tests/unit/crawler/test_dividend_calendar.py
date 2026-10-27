@@ -1,14 +1,36 @@
+import asyncio
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 import respx
 
-from livestocks.crawler import ParseError, UpstreamError
-from livestocks.crawler.dividend_calendar import fetch_calendar, parse_scan, scanner_market
-from livestocks.domain import CalendarKind
+from livestocks.crawler import ParseError, UpstreamError, dividend_calendar
+from livestocks.crawler.dividend_calendar import (
+    _record_for,
+    _with_derived_dates,
+    fetch_calendar,
+    parse_scan,
+    scanner_market,
+)
+from livestocks.domain import CalendarEntry, CalendarKind, shift_trading_days
 
 NOW = 1_790_000_000
+
+
+@pytest.fixture(autouse=True)
+def offline_quotes(monkeypatch):
+    """Keep the websocket out of these tests.
+    Each Recording Date lookup fails, so the derived dates are what the tests see.
+    """
+
+    async def unreachable(*args, **kwargs):
+        raise UpstreamError("offline in tests")
+
+    monkeypatch.setattr(dividend_calendar, "fetch_quote", unreachable)
+
+
 SCAN_URL = "https://scanner.tradingview.com/indonesia/scan"
 
 
@@ -121,3 +143,95 @@ class TestFetchCalendar:
         async with httpx.AsyncClient() as client:
             with pytest.raises(ParseError):
                 await fetch_calendar(client, "IDX", NOW)
+
+
+class TestDerivedDates:
+    def test_cum_date_is_the_trading_day_before_the_ex_date(self):
+        friday_ex = int(datetime(2026, 10, 23, 11, 59, tzinfo=UTC).timestamp())
+        entry = CalendarEntry("IDX", "CSRA", None, friday_ex, None, 15.0, 2.0, CalendarKind.PAYING)
+
+        dated = _with_derived_dates(entry)
+
+        assert dated.cum_date == shift_trading_days(friday_ex, -1)
+        assert datetime.fromtimestamp(dated.cum_date, UTC).day == 22
+
+    def test_recording_date_is_the_trading_day_after_the_ex_date(self):
+        friday_ex = int(datetime(2026, 10, 23, 11, 59, tzinfo=UTC).timestamp())
+        entry = CalendarEntry("IDX", "CSRA", None, friday_ex, None, 15.0, 2.0, CalendarKind.PAYING)
+
+        dated = _with_derived_dates(entry)
+
+        assert datetime.fromtimestamp(dated.record_date, UTC).day == 26
+
+    def test_entry_without_an_ex_date_gets_no_derived_dates(self):
+        entry = CalendarEntry("IDX", "XXX", None, None, None, None, None, CalendarKind.RECENT)
+
+        assert _with_derived_dates(entry).cum_date is None
+
+
+class TestRecordLookup:
+    def test_record_date_is_taken_from_the_row_with_the_same_ex_date(self):
+        raw = {
+            "dividend_ex_date_h": [1793707140, 1776686340],
+            "dividend_record_date_h": [1793793540, 1776772740],
+            "dividend_amount_h": [10, 15],
+        }
+
+        assert _record_for(raw, 1776686340) == 1776772740
+
+    def test_no_matching_ex_date_gives_none(self):
+        raw = {
+            "dividend_ex_date_h": [1793707140],
+            "dividend_record_date_h": [1793793540],
+        }
+
+        assert _record_for(raw, 1700000000) is None
+
+    async def test_real_record_date_replaces_the_derived_one(self, monkeypatch):
+        async def feed(exchange, symbol, max_seconds, fields):
+            return {
+                "dividend_ex_date_h": [NOW],
+                "dividend_record_date_h": [NOW + 86400 * 2],
+            }
+
+        monkeypatch.setattr(dividend_calendar, "fetch_quote", feed)
+        entry = _with_derived_dates(
+            CalendarEntry("IDX", "SIDO", None, NOW, None, 10.0, 10.8, CalendarKind.UPCOMING)
+        )
+
+        result = await dividend_calendar._with_record_dates([entry])
+
+        assert result[0].record_date == NOW + 86400 * 2
+
+    async def test_failed_lookup_keeps_the_derived_record_date(self):
+        entry = _with_derived_dates(
+            CalendarEntry("IDX", "SIDO", None, NOW, None, 10.0, 10.8, CalendarKind.UPCOMING)
+        )
+
+        result = await dividend_calendar._with_record_dates([entry])
+
+        assert result[0].record_date == entry.record_date
+
+    async def test_lookups_never_exceed_the_concurrency_limit(self, monkeypatch):
+        running = 0
+        peak = 0
+
+        async def slow(exchange, symbol, max_seconds, fields):
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+            raise UpstreamError("offline")
+
+        monkeypatch.setattr(dividend_calendar, "fetch_quote", slow)
+        entries = [
+            _with_derived_dates(
+                CalendarEntry("IDX", f"S{i}", None, NOW, None, 1.0, 1.0, CalendarKind.UPCOMING)
+            )
+            for i in range(12)
+        ]
+
+        await dividend_calendar._with_record_dates(entries)
+
+        assert peak <= dividend_calendar.RECORD_LOOKUPS

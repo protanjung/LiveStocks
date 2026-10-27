@@ -5,18 +5,23 @@ Rows are merged by symbol, preferring the announced dividend, and classified by 
 
 import asyncio
 import time
+from dataclasses import replace
 from typing import Any
 
 import httpx
+from loguru import logger
 
 from livestocks.crawler.errors import ParseError, UpstreamError
 from livestocks.crawler.json_values import as_dict, as_float, as_int, as_list
+from livestocks.crawler.quote_stream import fetch_quote, parse_quote
 from livestocks.crawler.retry import with_retries
-from livestocks.domain import CalendarEntry, CalendarKind
+from livestocks.domain import CalendarEntry, CalendarKind, shift_trading_days
 
 SCAN_URL = "https://scanner.tradingview.com/{market}/scan"
 RECENT_DAYS = 30
 ROWS = 200  # scanner rows per request; one market rarely has more dividends than this
+RECORD_LOOKUPS = 5  # websocket sessions open at once when reading Recording Dates
+RECORD_FIELDS = ("dividend_ex_date_h", "dividend_record_date_h")  # all a lookup needs
 COLUMNS = (
     "name",
     "description",
@@ -91,6 +96,54 @@ def _entry(exchange: str, symbol: str, values: list[Any], now: int) -> CalendarE
     )
 
 
+def _with_derived_dates(entry: CalendarEntry) -> CalendarEntry:
+    """Fill the Cum Date and a derived Recording Date from the Ex Date.
+    The Cum Date is the last trading day before the Ex Date.
+    The Recording Date is the first trading day after it.
+    Both skip weekends only, so they are approximations until the real Recording Date is read.
+    """
+    if entry.ex_date is None:
+        return entry
+    return replace(
+        entry,
+        cum_date=shift_trading_days(entry.ex_date, -1),
+        record_date=shift_trading_days(entry.ex_date, 1),
+    )
+
+
+def _record_for(raw: dict[str, Any], ex_date: int | None) -> int | None:
+    """Return the Recording Date TradingView publishes for one Ex Date, or None when it has none."""
+    dividend = parse_quote(raw).dividend
+    if dividend is None or ex_date is None:
+        return None
+    for payment in dividend.history:
+        if payment.ex_date == ex_date and payment.record_date is not None:
+            return payment.record_date
+    return None
+
+
+async def _with_record_dates(entries: list[CalendarEntry]) -> list[CalendarEntry]:
+    """Replace each derived Recording Date with the one TradingView publishes for the same Ex Date.
+    Each symbol needs one short websocket session, and at most RECORD_LOOKUPS run at once.
+    A symbol whose lookup fails, or whose feed has no matching Ex Date, keeps the derived date.
+    """
+    gate = asyncio.Semaphore(RECORD_LOOKUPS)
+
+    async def one(entry: CalendarEntry) -> CalendarEntry:
+        async with gate:
+            try:
+                raw = await fetch_quote(
+                    entry.exchange, entry.symbol, max_seconds=15.0, fields=RECORD_FIELDS
+                )
+            except UpstreamError as e:
+                logger.debug("recording date unavailable for {}: {}", entry.symbol, e)
+                return entry
+        record = _record_for(raw, entry.ex_date)
+        return entry if record is None else replace(entry, record_date=record)
+
+    return list(await asyncio.gather(*(one(e) for e in entries)))
+
+
 def parse_scan(data: Any, exchange: str, now: int) -> list[CalendarEntry]:
     """Turn a scanner response into calendar rows for one exchange.
     Rows of other exchanges in the same market are skipped, as are rows with no dividend dates.
@@ -112,7 +165,7 @@ def parse_scan(data: Any, exchange: str, now: int) -> list[CalendarEntry]:
             continue
         entry = _entry(exchange, ref.removeprefix(prefix), values, now)
         if entry is not None:
-            entries.append(entry)
+            entries.append(_with_derived_dates(entry))
     return entries
 
 
@@ -179,4 +232,4 @@ async def fetch_calendar(
             entry.kind is CalendarKind.UPCOMING and held.kind is not CalendarKind.UPCOMING
         ):
             merged[entry.symbol] = entry
-    return list(merged.values())
+    return await _with_record_dates(list(merged.values()))

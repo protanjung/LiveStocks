@@ -7,6 +7,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Sequence
 from itertools import zip_longest
 from typing import Any
 
@@ -43,14 +44,19 @@ def _split(raw: str) -> list[str]:
     return out
 
 
-async def fetch_quote(exchange: str, symbol: str, max_seconds: float = 25.0) -> dict[str, Any]:
-    """Open an anonymous TradingView quote session and collect every field of a symbol.
-    Returns when the server sends quote_completed or the timeout expires.
+async def fetch_quote(
+    exchange: str,
+    symbol: str,
+    max_seconds: float = 25.0,
+    fields: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Open an anonymous TradingView quote session and collect the fields of a symbol.
+    With fields None every field is streamed (about 200 KB); a short list is much lighter.
     Raises UpstreamError on socket errors, a bad status or an empty answer.
     """
     full = f"{exchange}:{symbol}"
     session = "qs_livestocks"
-    fields: dict[str, Any] = {}
+    collected: dict[str, Any] = {}
     deadline = time.monotonic() + max_seconds
     try:
         async with websockets.connect(
@@ -59,14 +65,19 @@ async def fetch_quote(exchange: str, symbol: str, max_seconds: float = 25.0) -> 
             max_size=None,
             open_timeout=10,
         ) as ws:
-            for method, params in (
+            setup: list[tuple[str, list[Any]]] = [
                 ("set_data_quality", ["low"]),
                 ("set_auth_token", ["unauthorized_user_token"]),
                 ("set_locale", ["en", "US"]),
                 ("quote_create_session", [session]),
+            ]
+            if fields:
+                setup.append(("quote_set_fields", [session, *fields]))
+            setup += [
                 ("quote_add_symbols", [session, full]),
                 ("quote_fast_symbols", [session, full]),
-            ):
+            ]
+            for method, params in setup:
                 await ws.send(_frame(method, params))
             done = False
             while not done:
@@ -82,7 +93,7 @@ async def fetch_quote(exchange: str, symbol: str, max_seconds: float = 25.0) -> 
                     if data.get("m") == "qsd":
                         q = data["p"][1]
                         if q.get("s") == "ok":
-                            fields.update(q.get("v") or {})
+                            collected.update(q.get("v") or {})
                         else:
                             raise UpstreamError(f"quote status {q.get('s')}")
                     elif data.get("m") == "quote_completed":
@@ -91,9 +102,9 @@ async def fetch_quote(exchange: str, symbol: str, max_seconds: float = 25.0) -> 
         raise
     except (TimeoutError, OSError, websockets.WebSocketException) as e:
         raise UpstreamError(f"websocket error: {e.__class__.__name__}") from e
-    if not fields:
+    if not collected:
         raise UpstreamError("no quote data")
-    return fields
+    return collected
 
 
 def _periods(raw: Any, keep: int) -> tuple[Period, ...]:
@@ -109,34 +120,45 @@ def _periods(raw: Any, keep: int) -> tuple[Period, ...]:
     return tuple(out[-keep:])
 
 
+def _cell(rows: list[tuple[Any, ...]], index: int, column: int) -> Any:
+    """Return one cell of the index-aligned history rows, or None when the row does not exist."""
+    return rows[index][column] if index < len(rows) else None
+
+
 def _dividend(v: dict[str, Any]) -> Dividend | None:
-    """Extract the upcoming and recent dividend and its payment history from raw quote fields.
-    The *_h arrays are index-aligned and newest first, so index 0 matches the upcoming dividend.
+    """Extract the upcoming and recent dividend, their Recording Dates and the payment history.
+    The *_h arrays are index-aligned and newest first. Index 0 is the upcoming dividend when one
+    is announced, so the recent dividend is then at index 1.
     Returns None when the feed carries no dividend data for the ticker.
     """
+    rows = list(
+        zip_longest(
+            as_list(v.get("dividend_ex_date_h")) or [],
+            as_list(v.get("dividend_payment_date_h")) or [],
+            as_list(v.get("dividend_amount_h")) or [],
+            as_list(v.get("dividend_type_h")) or [],
+            as_list(v.get("dividend_record_date_h")) or [],
+        )
+    )
     history = tuple(
         DividendPayment(
             as_int(ex),
             as_int(pay),
             as_float(amount),
             kind if isinstance(kind, str) else None,
+            as_int(record),
         )
-        for ex, pay, amount, kind in zip_longest(
-            as_list(v.get("dividend_ex_date_h")) or [],
-            as_list(v.get("dividend_payment_date_h")) or [],
-            as_list(v.get("dividend_amount_h")) or [],
-            as_list(v.get("dividend_type_h")) or [],
-        )
-    )
-    history = tuple(p for p in history if p.ex_date is not None or p.pay_date is not None)[
-        :DIVIDEND_KEEP
-    ]
+        for ex, pay, amount, kind, record in rows
+        if as_int(ex) is not None or as_int(pay) is not None
+    )[:DIVIDEND_KEEP]
+    next_ex = as_int(v.get("dividend_ex_date_upcoming"))
+    recent_at = 1 if next_ex is not None else 0
     last_ex = as_int(v.get("dividend_ex_date_recent"))
     yield_pct = as_float(v.get("dividends_yield_current"))
     if not history and last_ex is None and yield_pct is None:
         return None
     return Dividend(
-        next_ex=as_int(v.get("dividend_ex_date_upcoming")),
+        next_ex=next_ex,
         next_pay=as_int(v.get("dividend_payment_date_upcoming")),
         next_amount=as_float(v.get("dividend_amount_upcoming")),
         last_ex=last_ex,
@@ -144,6 +166,8 @@ def _dividend(v: dict[str, Any]) -> Dividend | None:
         last_amount=as_float(v.get("dividend_amount_recent")),
         yield_pct=yield_pct,
         history=history,
+        next_record=as_int(_cell(rows, 0, 4)) if next_ex is not None else None,
+        last_record=as_int(_cell(rows, recent_at, 4)),
     )
 
 

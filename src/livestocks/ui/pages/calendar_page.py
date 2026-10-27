@@ -18,7 +18,8 @@ from livestocks.ui.pages.common import Deps, T, footer, new_state, shell
 from livestocks.ui.primitives import crumb, empty_card, page_title
 
 CALENDAR_NOTE = (
-    "Source: TradingView scanner. Dates can change before payment; check the issuer. "
+    "Source: TradingView scanner. Cum Dates are derived from the Ex Date and ignore market holidays; "
+    "Recording Dates come from the stock feed where available. Dates can change; check the issuer. "
     "Not investment advice."
 )
 
@@ -39,7 +40,10 @@ def register(deps: Deps) -> None:
 
         def sig_of(entries: list[CalendarEntry]) -> tuple[Any, ...]:
             # The date is part of the signature so "today" moves on at midnight without a reload.
-            rows = tuple((e.symbol, e.ex_date, e.pay_date, e.kind) for e in entries)
+            rows = tuple(
+                (e.symbol, e.cum_date, e.ex_date, e.record_date, e.pay_date, e.kind)
+                for e in entries
+            )
             return (date.today().isoformat(), rows)
 
         async def load() -> tuple[list[CalendarEntry], str | None]:
@@ -57,7 +61,7 @@ def register(deps: Deps) -> None:
             ui.html(crumb(("← Dashboard", "/"), ("Calendar", None)), sanitize=False)
             ui.html(
                 page_title(
-                    "Dividend calendar", f"{exchange} · announced and recent ex-dividend dates"
+                    "Dividend calendar", f"{exchange} · Cum, Ex, Recording and Payment Dates"
                 ),
                 sanitize=False,
             )
@@ -95,7 +99,7 @@ def register(deps: Deps) -> None:
                 ui.html(
                     empty_card(
                         "No dividends to show",
-                        f"Nothing announced or paid in the last month on {exchange}.",
+                        f"No Cum, Ex, Recording or Payment Date in the last month on {exchange}.",
                     ),
                     sanitize=False,
                 )

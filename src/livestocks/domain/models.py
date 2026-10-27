@@ -118,15 +118,16 @@ class Period:
 
 @dataclass(frozen=True, slots=True)
 class DividendPayment:
-    """One past or announced dividend of a ticker, as TradingView lists it.
-    ex_date is the first day without the dividend and pay_date the payout day, both unix seconds.
-    amount is per share in the trading currency and kind is the frequency label, such as Annual.
+    """One past or announced dividend of a ticker, with its Ex, Payment and Recording Dates.
+    ex_date is the Ex Date and pay_date the Payment Date, both unix seconds; amount is per share.
+    kind is the frequency such as Annual; record_date is the Recording Date, or None if unknown.
     """
 
     ex_date: int | None
     pay_date: int | None
     amount: float | None
     kind: str | None
+    record_date: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +145,8 @@ class Dividend:
     last_amount: float | None
     yield_pct: float | None  # current yield in percent
     history: tuple[DividendPayment, ...]
+    next_record: int | None = None  # Recording Date of the announced dividend
+    last_record: int | None = None  # Recording Date of the most recent dividend
 
     def next_event(self, now: int) -> int | None:
         """Return the earliest date still ahead of now among the next ex-date and the last payout.
@@ -167,9 +170,9 @@ class CalendarKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class CalendarEntry:
-    """One row of the market dividend calendar.
+    """One row of the market dividend calendar: its Cum, Ex, Recording and Payment dates.
     Dates are unix seconds and amount is per share in the trading currency.
-    kind says which date the row is grouped under.
+    kind says which stage of the dividend cycle the row is grouped under.
     """
 
     exchange: str
@@ -180,6 +183,8 @@ class CalendarEntry:
     amount: float | None
     yield_pct: float | None
     kind: CalendarKind
+    cum_date: int | None = None  # last trading day with the right to the dividend
+    record_date: int | None = None  # Recording Date
 
 
 @dataclass(frozen=True, slots=True)
