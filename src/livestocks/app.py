@@ -5,6 +5,7 @@ Control then passes to NiceGUI's uvicorn server.
 
 from pathlib import Path
 
+from loguru import logger
 from nicegui import app, ui
 from nicegui.ui_run import DocsConfig
 
@@ -17,6 +18,7 @@ from livestocks.services import CalendarService, ForecastService, SuggestionServ
 from livestocks.storage import Store
 from livestocks.ui import register
 
+DEFAULT_SECRET = "livestocks-local"
 DOCS = DocsConfig(
     title="LiveStocks API",
     summary="Analyst forecasts crawled from TradingView.",
@@ -65,6 +67,11 @@ def main() -> None:
     This is the target of the livestocks console script.
     """
     configure_logging(default_settings.log_level, json=default_settings.log_json)
+    if default_settings.host == "0.0.0.0" and default_settings.storage_secret == DEFAULT_SECRET:
+        logger.warning(
+            "listening on all interfaces with the default storage secret; "
+            "set LIVESTOCKS_STORAGE_SECRET"
+        )
     create_app()
     ui.run(
         host=default_settings.host,
@@ -74,7 +81,7 @@ def main() -> None:
         dark=True,
         reload=False,
         show=False,
-        storage_secret="livestocks-local",
+        storage_secret=default_settings.storage_secret,
         show_welcome_message=False,
         fastapi_docs=DOCS,
     )
