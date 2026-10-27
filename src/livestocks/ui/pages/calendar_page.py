@@ -1,37 +1,38 @@
-"""The dividend calendar page at /calendar: a month grid or agenda, then the announced and recent dates.
-The month shown is kept per tab, so moving between months does not refetch the calendar.
-The data source and its limits are stated in the footer.
+"""The dividend hunting page at /calendar: dividends ranked by hunt score, or a month calendar.
+The hunt view ranks every dividend, draws its four dates on a timeline and explains it in a detail panel.
+A how-to guide on the page explains the dates, the score, the filters and both hunting styles.
 """
 
 from datetime import date
 from functools import partial
 from typing import Any
 
-from nicegui import ui
+from nicegui import events, ui
 
-from livestocks.domain import CalendarEntry
+from livestocks.domain import CalendarEntry, HuntStyle
 from livestocks.services import CalendarUnavailableError
 from livestocks.ui import dividends as dv
+from livestocks.ui import hunter
 from livestocks.ui.errors import describe
 from livestocks.ui.live import guarded, render_or_notice
-from livestocks.ui.pages.common import Deps, T, footer, new_state, shell
-from livestocks.ui.primitives import crumb, empty_card, page_title
+from livestocks.ui.pages.common import TABLE_CLICK_JS, Deps, T, footer, new_state, shell
+from livestocks.ui.primitives import card, crumb, empty_card, page_title
 
 CALENDAR_NOTE = (
-    "Source: TradingView scanner. Cum Dates are derived from the Ex Date and ignore market holidays; "
-    "Recording Dates come from the stock feed where available. Dates can change; check the issuer. "
-    "Not investment advice."
+    "Source: TradingView scanner for dates and fundamentals, Yahoo Finance for Ex Date history. "
+    "Cum Dates are derived from the Ex Date and ignore market holidays; Recording Dates come from "
+    "the stock feed where available. Dates can change; check the issuer. Not investment advice."
 )
 
 
 def register(deps: Deps) -> None:
-    """Define the dividend calendar page and bind it to the calendar service.
+    """Define the dividend hunting page and bind it to the calendar service.
     The page reloads on a timer, and the date in its signature keeps "today" current at midnight.
-    Month navigation changes only the view, so the data is fetched once per refresh.
+    Style, view, filters and selection are kept per tab and change only what is drawn, not the data.
     """
     calendar, settings = deps.calendar, deps.settings
 
-    # ---- dividend calendar ----
+    # ---- dividend hunting ----
     @ui.page("/calendar", title="Calendar · LiveStocks")
     async def calendar_page() -> None:
         state = new_state()
@@ -41,7 +42,16 @@ def register(deps: Deps) -> None:
         def sig_of(entries: list[CalendarEntry]) -> tuple[Any, ...]:
             # The date is part of the signature so "today" moves on at midnight without a reload.
             rows = tuple(
-                (e.symbol, e.cum_date, e.ex_date, e.record_date, e.pay_date, e.kind)
+                (
+                    e.symbol,
+                    e.cum_date,
+                    e.ex_date,
+                    e.record_date,
+                    e.pay_date,
+                    e.kind,
+                    e.price,
+                    e.trap.level if e.trap else None,
+                )
                 for e in entries
             )
             return (date.today().isoformat(), rows)
@@ -54,15 +64,20 @@ def register(deps: Deps) -> None:
             except CalendarUnavailableError as e:
                 return [], describe(e)
 
+        async def on_click(e: events.GenericEventArguments) -> None:
+            if hunter.apply_action(state, e.args[0], e.args[1]):
+                await body.refresh()
+
+        def clickable(html: str) -> None:
+            ui.html(html, sanitize=False).on("click", on_click, js_handler=TABLE_CLICK_JS)
+
         @ui.refreshable
         async def body() -> None:
             entries, problem = await load()
             last["sig"] = sig_of(entries)
             ui.html(crumb(("← Dashboard", "/"), ("Calendar", None)), sanitize=False)
             ui.html(
-                page_title(
-                    "Dividend calendar", f"{exchange} · Cum, Ex, Recording and Payment Dates"
-                ),
+                page_title("Dividend hunter", f"{exchange} · ranked by hunt score"),
                 sanitize=False,
             )
             if not settings.ui_calendar:
@@ -77,6 +92,35 @@ def register(deps: Deps) -> None:
             if problem is not None:
                 ui.html(empty_card("Calendar unavailable", problem), sanitize=False)
                 return
+            style = HuntStyle(state.style)
+            clickable(hunter.controls(style, state.view, state.filters, state.help))
+            if state.view == "month":
+                month_view(entries)
+            else:
+                hunt_view(entries, style)
+            clickable(hunter.howto_card(state.help))
+
+        def hunt_view(entries: list[CalendarEntry], style: HuntStyle) -> None:
+            rows = hunter.ranked(entries, style, state.filters)
+            keys = [hunter.key_of(e) for e, _ in rows]
+            if state.selected not in keys:
+                state.selected = keys[0] if keys else None
+            table = hunter.hunt_table(rows, state.selected, date.today())
+            label = "Short-term hunter" if style is HuntStyle.SHORT else "Long-term income"
+            clickable(
+                card(
+                    "Ranked by hunt score",
+                    table,
+                    sub=f"{len(rows)} dividends · {label}",
+                    label="Dividends ranked by hunt score",
+                    padded=False,
+                )
+            )
+            chosen = next((e for e, _ in rows if hunter.key_of(e) == state.selected), None)
+            if chosen is not None:
+                clickable(hunter.hunt_detail(chosen, style))
+
+        def month_view(entries: list[CalendarEntry]) -> None:
             year, month = dv.month_of(date.today(), state.month_offset)
             with T("section").classes("card"):
                 with T("div").classes("card-head"):

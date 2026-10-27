@@ -17,6 +17,7 @@ from livestocks.domain import (
     hunt_score,
 )
 from livestocks.ui.components import date_short, fmt
+from livestocks.ui.models import PageState
 from livestocks.ui.primitives import th, trunc
 
 WINDOW_DAYS = 42  # the timeline shows six weeks from today
@@ -49,6 +50,26 @@ def key_of(entry: CalendarEntry) -> str:
     It matches the key format used for tickers elsewhere in the app.
     """
     return f"{entry.exchange}:{entry.symbol}"
+
+
+def apply_action(state: PageState, action: str, value: str) -> bool:
+    """Apply one click from the controls or the table to the page state; True if anything changed.
+    Actions are style, view, filter (toggle), select and help (toggle); unknown ones are ignored.
+    Values are checked against the known choices, so a forged click cannot put the state out of range.
+    """
+    if action == "style" and value in (HuntStyle.SHORT, HuntStyle.LONG):
+        state.style = value
+    elif action == "view" and value in ("hunt", "month"):
+        state.view = value
+    elif action == "filter" and value in {key for key, _ in FILTERS}:
+        state.filters = state.filters ^ {value}
+    elif action == "select":
+        state.selected = value
+    elif action == "help":
+        state.help = not state.help
+    else:
+        return False
+    return True
 
 
 def _passes(e: CalendarEntry, filters: frozenset[str]) -> bool:
