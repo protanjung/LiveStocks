@@ -65,9 +65,18 @@ def register(deps: Deps) -> None:
             except CalendarUnavailableError as e:
                 return [], describe(e)
 
+        async def refresh_workspace() -> None:
+            """Rebuild the workspace and put the page back where it was.
+            The rebuild removes the workspace first, which shortens the page and makes the browser
+            clamp the scroll to the top; restoring the saved offset afterwards keeps the reader in place.
+            """
+            offset = await ui.run_javascript("window.scrollY")
+            await workspace.refresh()
+            await ui.run_javascript(f"window.scrollTo(0, {int(offset or 0)})")
+
         async def on_click(e: events.GenericEventArguments) -> None:
             if hunter.apply_action(state, e.args[0], e.args[1]):
-                await workspace.refresh()
+                await refresh_workspace()
 
         def clickable(html: str) -> None:
             ui.html(html, sanitize=False).on("click", on_click, js_handler=TABLE_CLICK_JS)
@@ -159,7 +168,7 @@ def register(deps: Deps) -> None:
 
         async def shift_month(step: int) -> None:
             state.month_offset += step
-            await workspace.refresh()
+            await refresh_workspace()
 
         await shell(deps, state, body.refresh)
         with T("div").classes("wrap"), T("main"):
@@ -171,6 +180,6 @@ def register(deps: Deps) -> None:
             if sig_of(entries) != last["sig"]:
                 last["sig"] = sig_of(entries)
                 current["entries"] = entries
-                await workspace.refresh()
+                await refresh_workspace()
 
         ui.timer(60.0, guarded("calendar refresh", maybe_refresh))
