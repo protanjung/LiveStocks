@@ -31,9 +31,21 @@ receive every field, around 1,400 of them, ending with a `quote_completed` messa
 | `recommendation_buy`, `_over`, `_hold`, `_under`, `_sell` | Analysts rating strong buy, buy, hold, sell, strong sell |
 | `earnings_fy_h`, `earnings_fq_h` | EPS per fiscal year and quarter, actual and estimate |
 | `revenues_fy_h`, `revenues_fq_h` | Revenue per fiscal year and quarter, actual and estimate |
+| `dividend_ex_date_upcoming`, `dividend_payment_date_upcoming`, `dividend_amount_upcoming` | Announced dividend: ex-date, payout date and amount per share. Absent unless one is announced |
+| `dividend_ex_date_recent`, `dividend_payment_date_recent`, `dividend_amount_recent` | The most recent dividend |
+| `dividend_ex_date_h`, `dividend_payment_date_h`, `dividend_amount_h`, `dividend_type_h` | Dividend history, newest first, index-aligned; index 0 matches the upcoming dividend when one exists |
+| `dividends_yield_current` | Current dividend yield in percent |
 
 This crawl is best-effort. If it fails the forecast is still stored and the dashboard and API show the missing parts as
 empty until the next refresh.
+
+## TradingView scanner (dividend calendar)
+
+`POST https://scanner.tradingview.com/{market}/scan` with a JSON filter and column list, no authentication. The market
+name comes from a table in `crawler/dividend_calendar.py`; IDX is `indonesia`. Two requests per exchange run each
+time the calendar cache expires: announced ex-dates still ahead, and ex-dates from the last 30 days. Rows are merged
+by symbol. Announced dividends are sparse on IDX (a handful at a time), so the calendar also lists recent ex-dates
+and payouts still ahead. The endpoint is unofficial, like the other sources here.
 
 ## Yahoo Finance
 

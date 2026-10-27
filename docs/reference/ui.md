@@ -6,6 +6,8 @@
 
 ::: livestocks.ui.financials
 
+::: livestocks.ui.dividends
+
 ::: livestocks.ui.seasonals
 
 ::: livestocks.ui.models

@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     port: int = 8080
     ui_suggestions: bool = True  # show the daily suggestions (holdings, lots) in the web UI
     api_token: str | None = None  # bearer token for the suggestion endpoints; unset disables POST
+    ui_calendar: bool = True  # show the market dividend calendar page in the web UI
+    calendar_ttl: int = 3600  # seconds a fetched dividend calendar is served before refetching
 
 
 settings = Settings()

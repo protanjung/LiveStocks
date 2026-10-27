@@ -10,6 +10,8 @@
 
 ::: livestocks.crawler.price_history
 
+::: livestocks.crawler.dividend_calendar
+
 ::: livestocks.crawler.retry
 
 ::: livestocks.crawler.errors

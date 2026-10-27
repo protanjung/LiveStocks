@@ -3,7 +3,9 @@ ForecastService and SuggestionService are the entry points the api and ui layers
 The Updater keeps tracked tickers fresh in the background.
 """
 
+from livestocks.services.calendar import CalendarService
 from livestocks.services.errors import (
+    CalendarUnavailableError,
     CrawlTimeoutError,
     ServiceError,
     SuggestionNotFoundError,
@@ -16,6 +18,8 @@ from livestocks.services.suggestions import SuggestionService
 from livestocks.services.updater import Crawler, Updater
 
 __all__ = [
+    "CalendarService",
+    "CalendarUnavailableError",
     "CrawlTimeoutError",
     "Crawler",
     "ForecastResult",

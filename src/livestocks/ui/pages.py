@@ -13,9 +13,16 @@ from typing import Any
 from nicegui import app, ui
 
 from livestocks.config import Settings
-from livestocks.domain import TickerId, TrackedTicker
-from livestocks.services import ForecastService, SuggestionService, TickerView
+from livestocks.domain import CalendarEntry, TickerId, TrackedTicker
+from livestocks.services import (
+    CalendarService,
+    CalendarUnavailableError,
+    ForecastService,
+    SuggestionService,
+    TickerView,
+)
 from livestocks.ui import components as c
+from livestocks.ui import dividends as dv
 from livestocks.ui import suggestions as s
 from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
@@ -52,8 +59,13 @@ SPARK_DAYS = 90
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 2 * 365 * 86400}
 
 
-def register(service: ForecastService, suggestions: SuggestionService, settings: Settings) -> None:
-    """Define the dashboard, detail and suggestions pages and bind them to the services.
+def register(
+    service: ForecastService,
+    suggestions: SuggestionService,
+    calendar: CalendarService,
+    settings: Settings,
+) -> None:
+    """Define the dashboard, detail, suggestions and calendar pages and bind them to the services.
     Pages read the services on a timer and refresh only when something changed.
     Add, remove and retry actions go through the forecast service, which wakes the updater.
     """
@@ -116,6 +128,10 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                 T("button").classes("btn ghost").on(
                     "click", lambda: ui.navigate.to("/suggestions")
                 ).text = "Suggestions"
+            if settings.ui_calendar:
+                T("button").classes("btn ghost").on(
+                    "click", lambda: ui.navigate.to("/calendar")
+                ).text = "Calendar"
             with T("div").classes("status").props('aria-live="polite"'):
                 dot = T("span").classes("dot")
                 status = ui.label()
@@ -448,6 +464,15 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                     else:
                         T("p").classes("muted").text = "Not enough price history for seasonals yet."
 
+            with T("div").classes("card"):
+                with T("div").classes("card-head"):
+                    T("h2").text = "Dividends"
+                with T("div").classes("card-body"):
+                    if extras is None or extras.dividend is None:
+                        T("p").classes("muted").text = "No dividend data for this ticker yet."
+                    else:
+                        ui.html(dv.dividend_card(extras.dividend, int(time.time())), sanitize=False)
+
             if extras is None:
                 ui.html(
                     '<div class="card"><div class="card-body muted">EPS, revenue and the analyst rating breakdown '
@@ -568,6 +593,67 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                 await body.refresh()
 
         ui.timer(15.0, maybe_refresh)
+
+    # ---- dividend calendar ----
+    @ui.page("/calendar")
+    async def calendar_page() -> None:
+        state = new_state()
+        last: dict[str, Any] = {"sig": None}
+        exchange = settings.default_exchange.upper()
+
+        def sig_of(entries: list[CalendarEntry]) -> tuple[tuple[Any, ...], ...]:
+            return tuple((e.symbol, e.ex_date, e.pay_date, e.kind) for e in entries)
+
+        async def load() -> tuple[list[CalendarEntry], str | None]:
+            if not settings.ui_calendar:
+                return [], None
+            try:
+                return await calendar.entries(exchange), None
+            except CalendarUnavailableError as e:
+                return [], describe(e)
+
+        @ui.refreshable
+        async def body() -> None:
+            entries, problem = await load()
+            last["sig"] = sig_of(entries)
+            with T("div").classes("crumb"):
+                T("button").on("click", lambda: ui.navigate.to("/")).text = "← Dashboard"
+                T("span").text = "/"
+                T("span").text = "Calendar"
+            with T("div").classes("page-title"):
+                T("h1").text = "Dividend calendar"
+                T("span").classes(
+                    "sub"
+                ).text = f"{exchange} · announced and recent ex-dividend dates"
+            if not settings.ui_calendar:
+                with T("section").classes("card empty"):
+                    T("h3").text = "Calendar is turned off"
+                    T("p").text = "The dividend calendar is disabled for this server."
+                return
+            if problem is not None:
+                with T("section").classes("card empty"):
+                    T("h3").text = "Calendar unavailable"
+                    T("p").text = problem
+                return
+            sections = dv.calendar_sections(entries)
+            if not sections:
+                with T("section").classes("card empty"):
+                    T("h3").text = "No dividends to show"
+                    T("p").text = f"Nothing announced or paid in the last month on {exchange}."
+                return
+            ui.html(sections, sanitize=False)
+
+        await shell(state, body.refresh)
+        with T("div").classes("wrap"), T("main"):
+            await body()
+        footer()
+
+        async def maybe_refresh() -> None:
+            entries, _ = await load()
+            if sig_of(entries) != last["sig"]:
+                await body.refresh()
+
+        ui.timer(60.0, maybe_refresh)
 
     def footer() -> None:
         ui.html(

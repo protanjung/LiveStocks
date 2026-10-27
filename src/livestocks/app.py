@@ -11,7 +11,7 @@ from livestocks.api import build_router, build_suggestions_router, register_erro
 from livestocks.config import Settings
 from livestocks.config import settings as default_settings
 from livestocks.logging_config import configure_logging
-from livestocks.services import ForecastService, SuggestionService, Updater
+from livestocks.services import CalendarService, ForecastService, SuggestionService, Updater
 from livestocks.storage import Store
 from livestocks.ui import register
 
@@ -35,6 +35,7 @@ def create_app(settings: Settings = default_settings) -> None:
     updater = Updater(store, settings)
     service = ForecastService(store, updater, settings)
     suggestions = SuggestionService(store)
+    calendar = CalendarService(settings)
 
     async def startup() -> None:
         await store.initialize()
@@ -42,11 +43,12 @@ def create_app(settings: Settings = default_settings) -> None:
 
     async def shutdown() -> None:
         await updater.stop()
+        await calendar.close()
         await store.close()
 
     app.on_startup(startup)
     app.on_shutdown(shutdown)
-    register(service, suggestions, settings)
+    register(service, suggestions, calendar, settings)
     app.include_router(build_router(service), prefix="/api/v1")
     app.include_router(build_suggestions_router(suggestions, settings), prefix="/api/v1")
     register_error_handlers(app)
