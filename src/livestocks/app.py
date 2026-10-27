@@ -3,6 +3,7 @@ Settings are read once, the store is opened and the updater and pages are wired.
 Control then passes to NiceGUI's uvicorn server.
 """
 
+import mimetypes
 from pathlib import Path
 
 from loguru import logger
@@ -18,6 +19,7 @@ from livestocks.services import CalendarService, ForecastService, SuggestionServ
 from livestocks.storage import Store
 from livestocks.ui import register
 
+mimetypes.add_type("font/woff2", ".woff2")
 DEFAULT_SECRET = "livestocks-local"
 DOCS = DocsConfig(
     title="LiveStocks API",

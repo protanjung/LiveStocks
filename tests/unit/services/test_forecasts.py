@@ -151,10 +151,17 @@ class TestWakeUp:
 async def running(store):
     """A service whose updater loop is running; crawl behaviour is set through ``plan``."""
     settings = Settings(jitter_max=0, refresh_interval=3600, poll_interval=60, api_wait_seconds=2)
-    plan: dict = {"calls": [], "delay": None, "error": None, "forecast": None}
+    plan: dict = {
+        "calls": [],
+        "delay": None,
+        "error": None,
+        "forecast": None,
+        "entered": asyncio.Event(),
+    }
 
     async def crawler(exchange, symbol):
         plan["calls"].append(symbol)
+        plan["entered"].set()
         if plan["delay"] is not None:
             await plan["delay"].wait()
         if plan["error"] is not None:
@@ -257,7 +264,10 @@ class TestGetOrTrack:
         plan["delay"] = asyncio.Event()
 
         pending = [asyncio.create_task(service.get_or_track("tlkm")) for _ in range(3)]
-        await asyncio.sleep(0.05)
+        # Wait until the first crawl is running and blocked, so the other requests join it.
+        await asyncio.wait_for(plan["entered"].wait(), timeout=5)
+        for _ in range(50):
+            await asyncio.sleep(0)
         plan["delay"].set()
         results = await asyncio.gather(*pending)
 
