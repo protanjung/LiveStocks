@@ -62,3 +62,52 @@ class TestParseDividend:
 
         assert dividend is not None
         assert len(dividend.history) == DIVIDEND_KEEP
+
+
+class TestRecordingDates:
+    def test_history_rows_carry_their_recording_date(self):
+        raw = {
+            "dividend_ex_date_h": [1793707140, 1776686340],
+            "dividend_payment_date_h": [1795175940, 1778155140],
+            "dividend_amount_h": [10, 15],
+            "dividend_record_date_h": [1793793540, 1776772740],
+        }
+
+        dividend = parse_quote(raw).dividend
+
+        assert dividend is not None
+        assert [p.record_date for p in dividend.history] == [1793793540, 1776772740]
+
+    def test_upcoming_dividend_moves_the_recent_one_to_index_one(self):
+        raw = {
+            "dividend_ex_date_upcoming": 1793707140,
+            "dividend_ex_date_h": [1793707140, 1776686340],
+            "dividend_record_date_h": [1793793540, 1776772740],
+        }
+
+        dividend = parse_quote(raw).dividend
+
+        assert dividend is not None
+        assert dividend.next_record == 1793793540
+        assert dividend.last_record == 1776772740
+
+    def test_without_an_upcoming_dividend_index_zero_is_the_recent_one(self):
+        raw = {
+            "dividend_ex_date_recent": 1776686340,
+            "dividend_ex_date_h": [1776686340],
+            "dividend_record_date_h": [1776772740],
+        }
+
+        dividend = parse_quote(raw).dividend
+
+        assert dividend is not None
+        assert dividend.next_record is None
+        assert dividend.last_record == 1776772740
+
+    def test_missing_record_dates_stay_none(self):
+        raw = {"dividend_ex_date_recent": 1776686340, "dividend_amount_recent": 15.0}
+
+        dividend = parse_quote(raw).dividend
+
+        assert dividend is not None
+        assert dividend.last_record is None

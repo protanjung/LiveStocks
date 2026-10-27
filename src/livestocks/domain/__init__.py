@@ -22,6 +22,7 @@ from livestocks.domain.models import (
 )
 from livestocks.domain.ratings import rating_label
 from livestocks.domain.tickers import parse_ticker
+from livestocks.domain.trading_days import shift_trading_days
 
 __all__ = [
     "CalendarEntry",
@@ -42,4 +43,5 @@ __all__ = [
     "TrackedTicker",
     "parse_ticker",
     "rating_label",
+    "shift_trading_days",
 ]

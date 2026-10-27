@@ -113,6 +113,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .tk span.nm { display: block; color: var(--muted); font-size: 12px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 6px; }
 .chip.pos { background: var(--pos-soft); } .chip.neg { background: var(--neg-soft); } .chip.warn { background: var(--warn-soft); }
+.chip.cum { background: var(--accent-soft); }
+.chip.rec { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .chg { font-family: var(--mono); font-size: 12px; margin-top: 2px; }
 .rate { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; }
 .rate.buy { color: var(--pos); } .rate.hold { color: var(--warn); } .rate.sell { color: var(--neg); }
@@ -236,14 +238,15 @@ td.r .act { margin-left: 2px; }
 .facts-flush { margin: 0; }
 .mt-12 { margin-top: 12px; }
 .cal-sections { display: grid; gap: 20px; }
-.cal-table { table-layout: fixed; width: 100%; min-width: 560px; }
+.cal-table { table-layout: fixed; width: 100%; min-width: 680px; }
 .cal-link { color: var(--accent); }
 .cal-name { display: inline-block; max-width: 100%; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .cal-month { display: grid; gap: 12px; }
 .cal-legend { gap: 16px; }
 .cal-empty { margin: 0; }
 .cal-scroll { overflow-x: auto; }
-.cal-week { display: grid; grid-template-columns: repeat(7, minmax(96px, 1fr)); gap: 6px; min-width: 700px; }
+.cal-week { display: grid; grid-template-columns: repeat(5, minmax(96px, 1fr)); gap: 6px; min-width: 520px; }
+.cal-weekend { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
 .cal-head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 4px; }
 .cal-cell { min-height: 76px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: grid; align-content: start; gap: 3px; min-width: 0; }
 .cal-cell.blank { border-color: transparent; }

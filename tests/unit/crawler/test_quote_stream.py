@@ -63,8 +63,11 @@ async def quote_server(monkeypatch):
     state = {"script": [], "received": []}
 
     async def handler(connection):
-        for _ in range(6):  # the six setup messages every session starts with
-            state["received"].append(await connection.recv())
+        while True:  # read the setup messages up to the last one the client always sends
+            message = await connection.recv()
+            state["received"].append(message)
+            if "quote_fast_symbols" in message:
+                break
         for message in state["script"]:
             await connection.send(message)
         await connection.wait_closed()
@@ -129,3 +132,27 @@ class TestFetchQuote:
 
         with pytest.raises(UpstreamError, match="websocket error"):
             await fetch_quote("IDX", "TLKM", max_seconds=2)
+
+
+class TestFieldSelection:
+    async def test_requested_fields_are_sent_as_one_set_fields_message(self, quote_server):
+        quote_server["script"] = [
+            frame({"m": "qsd", "p": ["qs", {"n": "x", "s": "ok", "v": {"a": 1}}]})
+            + frame({"m": "quote_completed", "p": ["qs", "x"]}),
+        ]
+
+        await fetch_quote("IDX", "SIDO", max_seconds=5, fields=["dividend_record_date_h"])
+
+        setup = [m for m in quote_server["received"] if "quote_set_fields" in m]
+        assert len(setup) == 1
+        assert "dividend_record_date_h" in setup[0]
+
+    async def test_no_field_list_sends_no_set_fields_message(self, quote_server):
+        quote_server["script"] = [
+            frame({"m": "qsd", "p": ["qs", {"n": "x", "s": "ok", "v": {"a": 1}}]})
+            + frame({"m": "quote_completed", "p": ["qs", "x"]}),
+        ]
+
+        await fetch_quote("IDX", "SIDO", max_seconds=5)
+
+        assert not any("quote_set_fields" in m for m in quote_server["received"])

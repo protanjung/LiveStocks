@@ -36,8 +36,9 @@ The scheduled Claude routine "Daily IDX Stock Suggestions" delivers its JSON rep
 `/suggestions` (history). All of them use `Authorization: Bearer $LIVESTOCKS_API_TOKEN`; without that variable
 delivery is disabled. The newest report also shows on the dashboard and at `/suggestions`; the web UI has no login,
 so set `LIVESTOCKS_UI_SUGGESTIONS=false` on a public host. See the API page of the documentation.
-The stock detail page shows the next dividend and recent payments. `/calendar` lists the market's announced and recent
-ex-dividend dates from TradingView's scanner; turn it off with `LIVESTOCKS_UI_CALENDAR=false`.
+The stock detail page shows the next dividend with its Cum Date, Ex Date, Recording Date and Payment Date. `/calendar`
+lists the market's dividend dates on the same four terms, Monday to Friday; turn it off with
+`LIVESTOCKS_UI_CALENDAR=false`.
 The `/suggestions` page shows a 90-day price chart on each stock card with its entry, stop and TP1 levels. Charts
 use the stored price history, so a stock only gets one after you track it (for example `IDX:BBRI`).
 
