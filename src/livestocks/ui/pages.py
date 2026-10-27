@@ -30,7 +30,7 @@ from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
 from livestocks.ui.models import PageState
 from livestocks.ui.seasonals import seasonal_options, seasonal_returns
-from livestocks.ui.theme import CSS, FONTS_HEAD
+from livestocks.ui.theme import FONTS_HEAD, STYLESHEET_HEAD
 
 
 class T(ui.element):
@@ -77,7 +77,7 @@ def register(
     # ---- shared shell ----
     async def shell(state: PageState, on_theme: Callable[[], Awaitable[None]]) -> None:
         ui.add_head_html(FONTS_HEAD)
-        ui.add_css(CSS)
+        ui.add_head_html(STYLESHEET_HEAD)
         dark = ui.dark_mode(state.dark)
 
         async def toggle() -> None:

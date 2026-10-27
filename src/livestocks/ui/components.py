@@ -1,5 +1,5 @@
 """Pure HTML builders for dashboard widgets.
-Class names come from theme.CSS and every dynamic string is escaped here.
+Class names come from ui/static/app.css and every dynamic string is escaped here.
 No function in this module performs I/O or touches NiceGUI.
 """
 
