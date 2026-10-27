@@ -5,8 +5,10 @@ No function in this module performs I/O or touches NiceGUI.
 
 import math
 import time
+from collections.abc import Callable
 from datetime import datetime
 from html import escape
+from typing import Any
 
 from livestocks.domain import Forecast, TrackedTicker, rating_label
 
@@ -157,14 +159,143 @@ def range_bar(f: Forecast) -> str:
 
 
 def ticker_cell(r: TrackedTicker) -> str:
-    """Return the ticker column cell: exchange badge, symbol and company name.
+    """Return the ticker column cell: exchange badge, a link to the symbol and the company name.
+    The symbol is a real link so keyboard and middle-click users can open the detail page.
     All text is HTML-escaped.
-    Shared by every row of the dashboard table.
     """
+    href = escape(f"/t/{r.exchange}/{r.symbol}", quote=True)
     return (
         f'<div class="tk"><div class="badge-ex">{escape(r.exchange)}</div>'
-        f'<div><b>{escape(r.symbol)}</b><span class="nm">{escape(r.name or "—")}</span></div></div>'
+        f'<div><b><a href="{href}">{escape(r.symbol)}</a></b>'
+        f'<span class="nm">{escape(r.name or "—")}</span></div></div>'
     )
+
+
+SORT_KEYS = ("ticker", "price", "up", "rating", "n")
+# Columns after the ticker cell: price, avg target, upside, range, rating, analysts, updated, actions.
+_VALUE_COLUMNS = 6
+
+
+def sort_tickers(rows: list[TrackedTicker], key: str, direction: int) -> list[TrackedTicker]:
+    """Return rows ordered by one of SORT_KEYS, with tickers that have no forecast last.
+    direction is 1 for ascending and -1 for descending; unknown keys raise KeyError.
+    Tickers without a forecast keep their input order after the ranked ones.
+    """
+    keys: dict[str, Callable[[TrackedTicker], Any]] = {
+        "ticker": lambda r: r.symbol,
+        "price": lambda r: r.forecast.price or 0 if r.forecast else 0,
+        "up": lambda r: r.upside if r.upside is not None else -1e9,
+        "rating": lambda r: r.forecast.rating_mark if r.forecast and r.forecast.rating_mark else 99,
+        "n": lambda r: (r.forecast.n_analysts or 0) if r.forecast else 0,
+    }
+    ok = [r for r in rows if r.forecast]
+    rest = [r for r in rows if not r.forecast]
+    return sorted(ok, key=keys[key], reverse=direction < 0) + rest
+
+
+def _head(label: str, key: str, sort_key: str, sort_dir: int, right: bool = False) -> str:
+    """Return a sortable column header: a real button, with aria-sort on the active column."""
+    cls = ' class="r"' if right else ""
+    if key != sort_key:
+        return (
+            f'<th scope="col"{cls}><button type="button" data-act="sort" data-key="{key}">'
+            f"{escape(label)}</button></th>"
+        )
+    up = sort_dir > 0
+    marker = "↑" if up else "↓"
+    order = "ascending" if up else "descending"
+    return (
+        f'<th scope="col"{cls} aria-sort="{order}"><button type="button" data-act="sort" '
+        f'data-key="{key}">{escape(label)}<span aria-hidden="true"> {marker}</span></button></th>'
+    )
+
+
+def _action_buttons(r: TrackedTicker) -> str:
+    """Return the retry and remove buttons for one row, named after the symbol they act on."""
+    key = escape(r.key, quote=True)
+    sym = escape(r.symbol)
+    retry = (
+        f'<button type="button" class="act retry" data-act="retry" data-key="{key}" '
+        f'aria-label="Retry {sym}" title="Retry">↻</button>'
+        if r.status in ("error", "failed")
+        else ""
+    )
+    remove = (
+        f'<button type="button" class="act" data-act="remove" data-key="{key}" '
+        f'aria-label="Remove {sym}" title="Remove">✕</button>'
+    )
+    return retry + remove
+
+
+def _row(r: TrackedTicker, busy: bool, now: int) -> str:
+    """Return one table row: the ticker link, then values, or a single message for missing forecasts.
+    The whole row carries data-href so a click anywhere on it opens the detail page.
+    Failed and failing tickers show their error; pending ones show a fetching note.
+    """
+    f = r.forecast
+    href = escape(f"/t/{r.exchange}/{r.symbol}", quote=True)
+    cells = [f"<td>{ticker_cell(r)}</td>"]
+    if f is None:
+        if r.status == "failed":
+            msg = (
+                f'<span class="err">⚠ {escape(r.last_error or "failed")} · '
+                f"gave up after {r.fail_count} tries</span>"
+            )
+        elif r.status == "error":
+            msg = (
+                f'<span class="err">⚠ {escape(r.last_error or "error")} · '
+                f"retry {r.fail_count}</span>"
+            )
+        else:
+            msg = '<span class="muted"><span class="spin"></span>Fetching first forecast…</span>'
+        cells.append(f'<td colspan="{_VALUE_COLUMNS + 1}">{msg}</td>')
+    else:
+        avg = price_fmt(f.pt_avg) if f.pt_avg else "—"
+        n = str(f.n_analysts if f.n_analysts is not None else "—")
+        cells.append(
+            f'<td class="r"><div class="num">{price_fmt(f.price)}</div>{change_line(f.change_pct)}</td>'
+            f'<td class="r num">{avg}</td>'
+            f'<td class="r">{upside_chip(r.upside)}</td>'
+            f"<td>{range_bar(f)}</td>"
+            f"<td>{rate_pill(f.rating_mark)}</td>"
+            f'<td class="r num">{n}</td>'
+        )
+    updated = (
+        '<span class="spin"></span>fetching'
+        if busy and f
+        else ago(r.fetched_at or r.last_fetch, now)
+    )
+    cells.append(f'<td class="muted">{updated}</td>')
+    cells.append(f'<td class="r">{_action_buttons(r)}</td>')
+    return f'<tr data-href="{href}">{"".join(cells)}</tr>'
+
+
+def forecast_table(
+    rows: list[TrackedTicker],
+    sort_key: str,
+    sort_dir: int,
+    busy: frozenset[str] | set[str],
+    now: int,
+) -> str:
+    """Return the dashboard table as one HTML string, rows in the requested sort order.
+    Headers and row actions carry data-act attributes, and the page handles clicks on them in one place.
+    busy holds the EXCHANGE:SYMBOL keys being crawled now; now is unix seconds for the updated column.
+    """
+    heads = "".join(
+        [
+            _head("Ticker", "ticker", sort_key, sort_dir),
+            _head("Price", "price", sort_key, sort_dir, right=True),
+            '<th scope="col" class="r">Avg target</th>',
+            _head("Upside", "up", sort_key, sort_dir, right=True),
+            '<th scope="col">Target range</th>',
+            _head("Rating", "rating", sort_key, sort_dir),
+            _head("Analysts", "n", sort_key, sort_dir, right=True),
+            '<th scope="col">Updated</th>',
+            '<th scope="col"><span class="visually-hidden">Actions</span></th>',
+        ]
+    )
+    body = "".join(_row(r, r.key in busy, now) for r in sort_tickers(rows, sort_key, sort_dir))
+    return f"<table><thead><tr>{heads}</tr></thead><tbody>{body}</tbody></table>"
 
 
 # ---- dashboard sections ----

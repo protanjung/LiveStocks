@@ -11,7 +11,7 @@ from functools import partial
 from html import escape
 from typing import Any
 
-from nicegui import app, ui
+from nicegui import app, events, ui
 
 from livestocks.config import Settings
 from livestocks.domain import CalendarEntry, TickerId, TrackedTicker
@@ -29,7 +29,7 @@ from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
 from livestocks.ui.models import PageState
-from livestocks.ui.primitives import crumb, empty_card, page_title
+from livestocks.ui.primitives import card, crumb, empty_card, page_title
 from livestocks.ui.seasonals import seasonal_options, seasonal_returns
 from livestocks.ui.theme import FONTS_HEAD, STYLESHEET_HEAD
 
@@ -59,6 +59,17 @@ class T(ui.element):
 
 SPARK_DAYS = 90
 RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 2 * 365 * 86400}
+
+
+# Runs in the browser: one listener handles sort, retry, remove and row navigation.
+TABLE_CLICK_JS = (
+    "(e) => {"
+    " const act = e.target.closest('[data-act]');"
+    " if (act) { emit(act.dataset.act, act.dataset.key); return; }"
+    " const row = e.target.closest('tr[data-href]');"
+    " if (row) emit('nav', row.dataset.href);"
+    "}"
+)
 
 
 def register(
@@ -197,10 +208,13 @@ def register(
             )
 
         last: dict[str, Any] = {"sig": None}
+        rows_by_key: dict[str, TrackedTicker] = {}
 
         @ui.refreshable
         async def body() -> None:
             rows = await service.list_tickers()
+            rows_by_key.clear()
+            rows_by_key.update({r.key: r for r in rows})
             last["sig"] = await sig()
             with T("div").classes("page-title"):
                 T("h1").text = "Forecast dashboard"
@@ -227,20 +241,6 @@ def register(
                 state.sort_key, state.sort_dir = key, (1 if key == "ticker" else -1)
             await body.refresh()
 
-        def sorted_rows(rows: list[TrackedTicker]) -> list[TrackedTicker]:
-            keys = {
-                "ticker": lambda r: r.symbol,
-                "price": lambda r: r.forecast.price or 0,
-                "up": lambda r: r.upside if r.upside is not None else -1e9,
-                "rating": lambda r: (
-                    r.forecast.rating_mark if r.forecast and r.forecast.rating_mark else 99
-                ),
-                "n": lambda r: r.forecast.n_analysts or 0,
-            }
-            ok = [r for r in rows if r.forecast]
-            rest = [r for r in rows if not r.forecast]
-            return sorted(ok, key=keys[state.sort_key], reverse=state.sort_dir < 0) + rest
-
         async def remove(r: TrackedTicker) -> None:
             await service.remove(r.id)
             ui.notify(f"Removed {r.key}")
@@ -250,91 +250,33 @@ def register(
             await service.retry(r.id)
             await body.refresh()
 
+        async def on_table(e: events.GenericEventArguments) -> None:
+            action, value = e.args[0], e.args[1]
+            if action == "sort":
+                await sort_by(value)
+            elif action == "nav":
+                ui.navigate.to(value)
+            elif (r := rows_by_key.get(value)) is not None:
+                if action == "retry":
+                    await retry(r)
+                elif action == "remove":
+                    await remove(r)
+
         def table(rows: list[TrackedTicker]) -> None:
-            def th(label: str, key: str | None = None, right: bool = False) -> None:
-                el = T("th").classes("r" if right else "")
-                with el:
-                    if key:
-                        on = state.sort_key == key
-                        if on:
-                            el.props(
-                                f'aria-sort="{"ascending" if state.sort_dir > 0 else "descending"}"'
-                            )
-                        T("button").on("click", partial(sort_by, key)).text = label + (
-                            (" ↑" if state.sort_dir > 0 else " ↓") if on else ""
-                        )
-                    else:
-                        el.text = label
-
-            with T("section").classes("card").props('aria-label="Tracked tickers"'):
-                with T("div").classes("card-head"):
-                    T("h2").text = "Forecast table"
-                    ui.html(
-                        '<span><i class="sw px"></i>Price</span><span><i class="sw avg"></i>Avg target</span>'
-                        '<span><i class="sw span"></i>Low to high target</span>',
-                        sanitize=False,
-                    ).classes("legend")
-                with T("div").classes("tablewrap").style("margin-top:8px"), T("table"):
-                    with T("thead"), T("tr"):
-                        th("Ticker", "ticker")
-                        th("Price", "price", True)
-                        T("th").classes("r").text = "Avg target"
-                        th("Upside", "up", True)
-                        T("th").text = "Target range"
-                        th("Rating", "rating")
-                        th("Analysts", "n", True)
-                        T("th").text = "Updated"
-                        T("th")
-                    with T("tbody"):
-                        for r in sorted_rows(rows):
-                            row_view(r)
-
-        def row_view(r: TrackedTicker) -> None:
-            f = r.forecast
-            tr = T("tr").on("click", partial(ui.navigate.to, f"/t/{r.exchange}/{r.symbol}"))
-            with tr:
-                ui.html(c.ticker_cell(r), sanitize=False, tag="td")
-                busy = r.key in service.fetching()
-                if f is None:
-                    if r.status == "failed":
-                        msg = f'<td colspan="6" class="err">⚠ {escape(r.last_error or "failed")} · gave up after {r.fail_count} tries</td>'
-                    elif r.status == "error":
-                        msg = f'<td colspan="6" class="err">⚠ {escape(r.last_error or "error")} · retry {r.fail_count}</td>'
-                    else:
-                        msg = '<td colspan="6" class="muted"><span class="spin"></span>Fetching first forecast…</td>'
-                    ui.html(msg, sanitize=False, tag="td").props('colspan="6"')
-                else:
-                    ui.html(
-                        f'<div class="num">{c.price_fmt(f.price)}</div>{c.change_line(f.change_pct)}',
-                        sanitize=False,
-                        tag="td",
-                    ).classes("r")
-                    ui.html(
-                        c.price_fmt(f.pt_avg) if f.pt_avg else "—", sanitize=False, tag="td"
-                    ).classes("r num")
-                    ui.html(c.upside_chip(r.upside), sanitize=False, tag="td").classes("r")
-                    ui.html(c.range_bar(f), sanitize=False, tag="td")
-                    ui.html(c.rate_pill(f.rating_mark), sanitize=False, tag="td")
-                    ui.html(
-                        str(f.n_analysts if f.n_analysts is not None else "—"),
-                        sanitize=False,
-                        tag="td",
-                    ).classes("r num")
-                ui.html(
-                    '<span class="spin"></span>fetching'
-                    if busy and f
-                    else c.ago(r.fetched_at or r.last_fetch),
-                    sanitize=False,
-                    tag="td",
-                ).classes("muted")
-                with T("td").classes("r"):
-                    if r.status in ("error", "failed"):
-                        T("button").classes("act retry").props(
-                            'aria-label="Retry" title="Retry"'
-                        ).on("click.stop", partial(retry, r)).text = "↻"
-                    T("button").classes("act").props(
-                        f'aria-label="Remove {r.symbol}" title="Remove"'
-                    ).on("click.stop", partial(remove, r)).text = "✕"
+            legend = (
+                '<div class="card-body"><div class="legend">'
+                '<span><i class="sw px"></i>Price</span>'
+                '<span><i class="sw avg"></i>Avg target</span>'
+                '<span><i class="sw span"></i>Low to high target</span></div></div>'
+            )
+            table_html = c.forecast_table(
+                rows, state.sort_key, state.sort_dir, service.fetching(), int(time.time())
+            )
+            body_html = f'{legend}<div class="tablewrap mt-8">{table_html}</div>'
+            ui.html(
+                card("Forecast table", body_html, label="Tracked tickers", padded=False),
+                sanitize=False,
+            ).on("click", on_table, js_handler=TABLE_CLICK_JS)
 
         async def theme_changed() -> None:
             await body.refresh()

@@ -108,6 +108,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .tk { display: flex; align-items: center; gap: 10px; }
 .tk .badge-ex { width: 34px; height: 34px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); display: grid; place-items: center; font-family: var(--mono); font-size: 10px; color: var(--muted); }
 .tk b { font-weight: 600; letter-spacing: .02em; }
+.tk b a { color: var(--fg); text-decoration: none; }
+.tk b a:hover { color: var(--accent); text-decoration: underline; }
 .tk span.nm { display: block; color: var(--muted); font-size: 12px; }
 .chip { display: inline-flex; align-items: center; gap: 4px; font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 6px; }
 .chip.pos { background: var(--pos-soft); } .chip.neg { background: var(--neg-soft); } .chip.warn { background: var(--warn-soft); }
