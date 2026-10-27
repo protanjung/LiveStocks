@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     )
     ui_calendar: bool = True  # show the market dividend calendar page in the web UI
     calendar_ttl: int = 3600  # seconds a fetched dividend calendar is served before refetching
+    trap_ttl: int = 12 * 3600  # seconds a stock's Ex Date price history is reused before refetching
 
 
 settings = Settings()
