@@ -61,9 +61,9 @@ def parse_chart(data: dict[str, Any]) -> list[PriceBar]:
 
 
 async def fetch_prices(
-    client: httpx.AsyncClient, exchange: str, symbol: str, range_: str = "2y"
+    client: httpx.AsyncClient, exchange: str, symbol: str, range_: str = "10y"
 ) -> list[PriceBar]:
-    """Download daily closes for the last range_ (default two years) from Yahoo.
+    """Download daily closes for the last range_ (default ten years) from Yahoo.
     Returns an empty list for exchanges without a Yahoo mapping.
     Network and HTTP failures are retried once, then raise UpstreamError.
     """

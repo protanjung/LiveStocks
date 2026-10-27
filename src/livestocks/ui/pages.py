@@ -21,6 +21,7 @@ from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
 from livestocks.ui.models import PageState
+from livestocks.ui.seasonals import seasonal_options, seasonal_returns
 from livestocks.ui.theme import CSS, FONTS_HEAD
 
 
@@ -48,7 +49,7 @@ class T(ui.element):
 
 
 SPARK_DAYS = 90
-RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 0}
+RANGES = {"3M": 90 * 86400, "6M": 180 * 86400, "1Y": 365 * 86400, "2Y": 2 * 365 * 86400}
 
 
 def register(service: ForecastService, suggestions: SuggestionService, settings: Settings) -> None:
@@ -433,6 +434,19 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
                         f'<div class="card-body">{c.facts(r)}</div></div>',
                         sanitize=False,
                     )
+
+            with T("div").classes("card"):
+                with T("div").classes("card-head"):
+                    T("h2").text = "Seasonals"
+                    T("span").classes("sub").text = "10 years · % from prior December close"
+                with T("div").classes("card-body"):
+                    history = await service.price_history(tid)
+                    if seasonal_returns(history):
+                        ui.echart(seasonal_options(history, state.dark)).style(
+                            "height:340px;width:100%"
+                        )
+                    else:
+                        T("p").classes("muted").text = "Not enough price history for seasonals yet."
 
             if extras is None:
                 ui.html(

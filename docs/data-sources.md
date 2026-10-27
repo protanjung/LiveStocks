@@ -37,7 +37,7 @@ empty until the next refresh.
 
 ## Yahoo Finance
 
-`https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2y&interval=1d`
+`https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=10y&interval=1d`
 
 TradingView only serves price history over the same websocket in a heavier protocol, so daily closes come from Yahoo's
 public chart endpoint. A table in `crawler/price_history.py` maps TradingView exchanges to Yahoo suffixes (`IDX` becomes
