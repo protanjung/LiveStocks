@@ -300,7 +300,7 @@ td.r .act { margin-left: 2px; }
 .hd-note { margin: 8px 0 0; font-size: 12px; }
 .howto summary { cursor: pointer; padding: 14px 16px; font-weight: 600; }
 .howto-body { padding: 0 16px 16px; max-width: 90ch; font-size: 13px; line-height: 1.6; }
-.howto-body h3 { margin: 16px 0 6px; font-size: 14px; }
+.howto-body h3 { margin: 16px 0 6px; font-size: 14px; font-weight: 600; color: var(--fg); }
 .howto-body p, .howto-body ul, .howto-body ol { margin: 0 0 8px; }
 .howto-body li { margin: 2px 0; }
 @media (max-width: 900px) { .hunt-detail { grid-template-columns: minmax(0, 1fr); } }
