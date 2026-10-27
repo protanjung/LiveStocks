@@ -55,3 +55,39 @@ class TestMonthGrid:
 
         assert "&lt;b&gt;" in html
         assert "<b>" not in html
+
+
+class TestMonthAgenda:
+    def test_empty_month_says_so_in_words(self):
+        html = month_grid([], 2026, 11, date(2026, 10, 27))
+
+        assert "No dividend dates in November." in html
+
+    def test_today_is_marked_for_assistive_technology(self):
+        html = month_grid(
+            [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)], 2026, 11, date(2026, 11, 3)
+        )
+
+        assert 'aria-current="date"' in html
+
+    def test_day_label_counts_its_events(self):
+        html = month_grid(
+            [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)], 2026, 11, date(2026, 10, 27)
+        )
+
+        assert 'aria-label="3 November, 1 event"' in html
+
+    def test_agenda_lists_only_days_with_events(self):
+        html = month_grid(
+            [_entry("SIDO", ex=_ts(2026, 11, 3), pay=None)], 2026, 11, date(2026, 10, 27)
+        )
+
+        assert '<ol class="cal-agenda">' in html
+        assert '<time datetime="2026-11-03">' in html
+        assert html.count('<li class="cal-day-row">') == 1
+
+    def test_legend_explains_both_chips(self):
+        html = month_grid([], 2026, 11, date(2026, 10, 27))
+
+        assert "ex-date, the price adjusts" in html
+        assert "payout date" in html

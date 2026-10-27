@@ -232,6 +232,34 @@ td.r .act { margin-left: 2px; }
 .sug-spark .lvl::before { content: ""; display: inline-block; width: 10px; border-top: 1px dashed currentColor; margin-right: 4px; vertical-align: middle; }
 .sug-spark.none { padding: 14px 0; text-align: center; border: 1px dashed var(--line); border-radius: 8px; }
 
+/* dividend views */
+.facts-flush { margin: 0; }
+.mt-12 { margin-top: 12px; }
+.cal-sections { display: grid; gap: 20px; }
+.cal-table { table-layout: fixed; width: 100%; min-width: 560px; }
+.cal-link { color: var(--accent); }
+.cal-name { display: inline-block; max-width: 100%; margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.cal-month { display: grid; gap: 12px; }
+.cal-legend { gap: 16px; }
+.cal-empty { margin: 0; }
+.cal-scroll { overflow-x: auto; }
+.cal-week { display: grid; grid-template-columns: repeat(7, minmax(96px, 1fr)); gap: 6px; min-width: 700px; }
+.cal-head { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 4px; }
+.cal-cell { min-height: 76px; border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: grid; align-content: start; gap: 3px; min-width: 0; }
+.cal-cell.blank { border-color: transparent; }
+.cal-cell.today { border-color: var(--accent); }
+.cal-day { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+.cal-chip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.cal-more { font-size: 11px; color: var(--muted); }
+.cal-agenda { display: none; list-style: none; margin: 0; padding: 0; }
+.cal-day-row { display: grid; gap: 6px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.cal-day-row time { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.cal-day-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 600px) {
+  .cal-scroll { display: none; }
+  .cal-agenda { display: block; }
+}
+
 /* touch targets: 44px on coarse pointers */
 @media (pointer: coarse) {
   .act, .seg button, th button, .crumb button, .btn, .btn.fine { min-height: 44px; min-width: 44px; }

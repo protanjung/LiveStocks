@@ -565,8 +565,10 @@ def register(
         last: dict[str, Any] = {"sig": None}
         exchange = settings.default_exchange.upper()
 
-        def sig_of(entries: list[CalendarEntry]) -> tuple[tuple[Any, ...], ...]:
-            return tuple((e.symbol, e.ex_date, e.pay_date, e.kind) for e in entries)
+        def sig_of(entries: list[CalendarEntry]) -> tuple[Any, ...]:
+            # The date is part of the signature so "today" moves on at midnight without a reload.
+            rows = tuple((e.symbol, e.ex_date, e.pay_date, e.kind) for e in entries)
+            return (date.today().isoformat(), rows)
 
         async def load() -> tuple[list[CalendarEntry], str | None]:
             if not settings.ui_calendar:

@@ -13,6 +13,7 @@ from livestocks.ui.primitives import card, th
 
 HISTORY_ROWS = 8
 MAX_CHIPS = 3  # calendar chips shown per day before the rest collapse into a count
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 SECTIONS = (
     (CalendarKind.UPCOMING, "Upcoming ex-dates", "announced, price adjusts on the ex-date"),
     (CalendarKind.PAYING, "Paying soon", "went ex-dividend, payout still ahead"),
@@ -20,20 +21,6 @@ SECTIONS = (
 )
 # Column widths shared by every calendar table so the three cards line up.
 TABLE_COLUMNS = ("44%", "14%", "14%", "14%", "14%")
-_TABLE = "table-layout:fixed;width:100%;min-width:560px"
-_NAME = "display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom"
-_WEEK = "display:grid;grid-template-columns:repeat(7,minmax(96px,1fr));gap:6px;min-width:700px"
-_HEAD = (
-    "font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;padding:0 4px"
-)
-_CELL = (
-    "min-height:76px;border:1px solid var(--line);border-radius:8px;padding:4px;"
-    "display:grid;align-content:start;gap:3px;min-width:0"
-)
-_TODAY = ";border-color:var(--accent)"
-_DAY = "font-size:12px;color:var(--muted);font-family:var(--mono)"
-_CHIP = "display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px"
-_MORE = "font-size:11px;color:var(--muted)"
 
 
 def _amount(v: float | None) -> str:
@@ -64,7 +51,7 @@ def dividend_card(d: Dividend, now: int) -> str:
         ("Yield", _pct(d.yield_pct)),
     ]
     facts = (
-        '<dl class="facts" style="margin:0">'
+        '<dl class="facts facts-flush">'
         + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in rows)
         + "</dl>"
     )
@@ -74,7 +61,7 @@ def dividend_card(d: Dividend, now: int) -> str:
         for p in d.history[:HISTORY_ROWS]
     )
     table = (
-        '<div class="tablewrap fin" style="margin-top:12px"><table class="fintable"><thead><tr>'
+        '<div class="tablewrap fin mt-12"><table class="fintable"><thead><tr>'
         "<th>Ex-date</th><th class='r'>Paid</th><th class='r'>Amount (IDR)</th><th class='r'>Type</th>"
         f"</tr></thead><tbody>{history}</tbody></table></div>"
         if history
@@ -88,11 +75,11 @@ def _row(e: CalendarEntry) -> str:
     The symbol links, and the company name follows it in muted text that is cut short when long.
     Dates and numbers follow the same formats as the detail card.
     """
-    href = escape(f"/t/{e.exchange}/{e.symbol}")
+    href = escape(f"/t/{e.exchange}/{e.symbol}", quote=True)
     name = escape(e.name or e.symbol)
     return (
-        f'<tr><th><a href="{href}" style="color:var(--accent)">{escape(e.symbol)}</a>'
-        f'<span class="muted" style="margin-left:8px;{_NAME}">{name}</span></th>'
+        f'<tr><th><a class="cal-link" href="{href}">{escape(e.symbol)}</a>'
+        f'<span class="muted cal-name">{name}</span></th>'
         f"<td>{date_short(e.ex_date)}</td><td class='r'>{date_short(e.pay_date)}</td>"
         f"<td class='r num'>{_amount(e.amount)}</td><td class='r num'>{_pct(e.yield_pct)}</td></tr>"
     )
@@ -111,7 +98,7 @@ def calendar_sections(entries: list[CalendarEntry]) -> str:
             continue
         body = "".join(_row(e) for e in rows)
         table = (
-            f'<div class="tablewrap"><table class="fintable" style="{_TABLE}">'
+            f'<div class="tablewrap"><table class="fintable cal-table">'
             f"<colgroup>{cols}</colgroup><thead><tr>"
             f"{th('Ticker')}{th('Ex-date')}{th('Pay date', classes='r')}"
             f"{th('Amount (IDR)', classes='r')}{th('Yield', classes='r')}"
@@ -120,7 +107,7 @@ def calendar_sections(entries: list[CalendarEntry]) -> str:
         cards.append(card(title, table, sub=f"{len(rows)} · {note}", label=title, padded=False))
     if not cards:
         return ""
-    return '<div style="display:grid;gap:20px">' + "".join(cards) + "</div>"
+    return '<div class="cal-sections">' + "".join(cards) + "</div>"
 
 
 def month_of(today: date, offset: int) -> tuple[int, int]:
@@ -140,39 +127,91 @@ def month_label(year: int, month: int) -> str:
     return f"{calendar.month_name[month]} {year}"
 
 
-def month_grid(entries: list[CalendarEntry], year: int, month: int, today: date) -> str:
-    """Return a Monday-first month grid with each day's ex-dates and payouts as chips.
-    Ex-dates are marked EX and payouts PAY; a day shows up to MAX_CHIPS chips, then a count.
-    Days outside the month are left blank so every week keeps seven columns, and today is outlined.
+def _marks(
+    entries: list[CalendarEntry], year: int, month: int
+) -> dict[date, list[tuple[str, CalendarEntry]]]:
+    """Return the ex-dates (EX) and payouts (PAY) that fall in one month, grouped by local day.
+    Dates are converted to the server's local day, the same day the table shows.
     """
-    marks: dict[date, list[str]] = {}
+    marks: dict[date, list[tuple[str, CalendarEntry]]] = {}
     for e in entries:
-        for ts, prefix, cls in ((e.ex_date, "EX", "pos"), (e.pay_date, "PAY", "")):
+        for ts, prefix in ((e.ex_date, "EX"), (e.pay_date, "PAY")):
             if ts is None:
                 continue
             day = datetime.fromtimestamp(ts).date()
             if day.year == year and day.month == month:
-                chip = (
-                    f'<span class="chip {cls}" style="{_CHIP}">{prefix} {escape(e.symbol)}</span>'
-                )
-                marks.setdefault(day, []).append(chip)
+                marks.setdefault(day, []).append((prefix, e))
+    return marks
 
-    head = "".join(
-        f'<div style="{_HEAD}">{name}</div>'
-        for name in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+def _chip(prefix: str, e: CalendarEntry) -> str:
+    """Return one EX or PAY chip, with the company name in its tooltip."""
+    kind = "pos" if prefix == "EX" else "warn"
+    title = escape(f"{prefix} · {e.name or e.symbol}", quote=True)
+    return f'<span class="chip {kind} cal-chip" title="{title}">{prefix} {escape(e.symbol)}</span>'
+
+
+def _legend() -> str:
+    """Return the key that explains the EX and PAY chips above the grid and agenda."""
+    return (
+        '<div class="legend cal-legend">'
+        '<span><span class="chip pos">EX</span>ex-date, the price adjusts</span>'
+        '<span><span class="chip warn">PAY</span>payout date</span></div>'
     )
+
+
+def _grid(
+    marks: dict[date, list[tuple[str, CalendarEntry]]], year: int, month: int, today: date
+) -> str:
+    """Return the wide-screen month grid: Monday first, blank days outside the month, today outlined.
+    Each day is labelled for assistive technology with its date and how many events it has.
+    """
+    head = "".join(f'<div class="cal-head" aria-hidden="true">{d}</div>' for d in WEEKDAYS)
     cells: list[str] = []
     for week in calendar.Calendar(firstweekday=0).monthdatescalendar(year, month):
         for day in week:
             if day.month != month:
-                cells.append("<div></div>")
+                cells.append('<div class="cal-cell blank" aria-hidden="true"></div>')
                 continue
-            chips = marks.get(day, [])
-            shown = chips[:MAX_CHIPS]
-            if len(chips) > MAX_CHIPS:
-                shown.append(f'<span style="{_MORE}">+{len(chips) - MAX_CHIPS} more</span>')
-            style = _CELL + (_TODAY if day == today else "")
+            events = marks.get(day, [])
+            chips = [_chip(prefix, e) for prefix, e in events[:MAX_CHIPS]]
+            if len(events) > MAX_CHIPS:
+                chips.append(f'<span class="cal-more">+{len(events) - MAX_CHIPS} more</span>')
+            label = f"{day.day} {calendar.month_name[month]}"
+            if events:
+                label += f", {len(events)} event{'s' if len(events) != 1 else ''}"
+            current = ' aria-current="date"' if day == today else ""
+            today_cls = " today" if day == today else ""
             cells.append(
-                f'<div style="{style}"><span style="{_DAY}">{day.day}</span>{"".join(shown)}</div>'
+                f'<div class="cal-cell{today_cls}" role="group" aria-label="{escape(label, quote=True)}"'
+                f'{current}><span class="cal-day">{day.day}</span>{"".join(chips)}</div>'
             )
-    return f'<div class="tablewrap"><div style="{_WEEK}">{head}{"".join(cells)}</div></div>'
+    return f'<div class="cal-scroll"><div class="cal-week">{head}{"".join(cells)}</div></div>'
+
+
+def _agenda(marks: dict[date, list[tuple[str, CalendarEntry]]]) -> str:
+    """Return the narrow-screen agenda: one entry per day that has events, oldest first.
+    Shown instead of the grid on phones, where seven columns would not fit.
+    """
+    items: list[str] = []
+    for day in sorted(marks):
+        chips = "".join(_chip(prefix, e) for prefix, e in marks[day])
+        items.append(
+            f'<li class="cal-day-row"><time datetime="{day.isoformat()}">{day:%a %d %b}</time>'
+            f'<div class="cal-day-chips">{chips}</div></li>'
+        )
+    return f'<ol class="cal-agenda">{"".join(items)}</ol>'
+
+
+def month_grid(entries: list[CalendarEntry], year: int, month: int, today: date) -> str:
+    """Return one month of the calendar: a grid on wide screens, an agenda on phones, and a legend.
+    Ex-dates are marked EX and payouts PAY. A day shows up to MAX_CHIPS chips, then a count.
+    A month with no dates says so in words, so an empty grid is never mistaken for a loading one.
+    """
+    marks = _marks(entries, year, month)
+    label = month_label(year, month)
+    if not marks:
+        body = f'<p class="muted cal-empty">No dividend dates in {calendar.month_name[month]}.</p>'
+    else:
+        body = _grid(marks, year, month, today) + _agenda(marks)
+    return f'<div class="cal-month" role="region" aria-label="{escape(label, quote=True)}">{_legend()}{body}</div>'
