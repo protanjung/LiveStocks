@@ -87,7 +87,13 @@ The architecture test fails until the three fixed files exist.
 The pages live in `ui/pages/`: one module per page (`dashboard`, `detail`, `suggestions_page`, `calendar_page`), shared pieces in `common`, and `register()` in `__init__` wiring them to one `Deps` bundle. Shared HTML lives in pure builder modules: `components`
 (dashboard pieces, the sortable forecast table), `dividends` (dividend card and calendar), `suggestions`, `chart`,
 `financials`, `seasonals`, `primitives` (cards, crumbs, empty states, table headers) and `live` (guards for timers and
-first renders). Each builder escapes its text and is unit-tested without NiceGUI.
+first renders). `hunter` builds the dividend-hunting page (controls, ranked table with timelines, detail panel and the
+how-to guide), and `domain/hunt.py` holds the score and checklist as pure functions. Each builder escapes its text and
+is unit-tested without NiceGUI.
+
+The pages themselves are rendered in tests with NiceGUI's simulated user on fake services
+(`tests/unit/ui/app/`, `tests/unit/ui/test_pages_calendar.py`). The `simulate()` helper restores the `livestocks`
+modules that the simulation removes from `sys.modules`, so later tests can still patch them by name.
 
 Styles live in `ui/static/app.css`, served from `/static/app.css`. Colour tokens are defined on `:root` and
 `body.body--light`. `tests/unit/ui/test_theme.py` checks text contrast in both themes and that every class the builders

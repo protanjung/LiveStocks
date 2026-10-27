@@ -53,6 +53,13 @@ weekends only (no market holiday calendar is kept). The real Recording Date is t
 websocket (`dividend_record_date_h`, five sessions at a time, about one second each), and replaces the derived one
 when the feed has a matching Ex Date. The endpoint is unofficial, like the other sources here.
 
+### Hunting columns
+
+The same two scans also return price, daily change, 30-day average volume, sector, payout ratio (trailing, or fiscal
+year when the trailing figure is 0), years of consecutive dividends and growth, cash-dividend coverage, and the plain
+dividend yield (used when the current yield is 0). The calendar derives the event yield (amount divided by price) and
+the daily turnover (volume times price) from them, and `domain/hunt.py` turns them into the hunt score and checklist.
+
 ## Yahoo Finance
 
 `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=10y&interval=1d`
@@ -61,6 +68,11 @@ TradingView only serves price history over the same websocket in a heavier proto
 public chart endpoint. A table in `crawler/price_history.py` maps TradingView exchanges to Yahoo suffixes (`IDX` becomes
 `.JK`, US exchanges need none). Tickers on an exchange that is not in the table get no history; the price chart then
 falls back to the prices saved with each forecast.
+
+The calendar also asks Yahoo for `range=5y&interval=1d&events=div` once per listed stock (five at a time, in the
+background, cached for `LIVESTOCKS_TRAP_TTL`). From the daily closes and the dividend events it computes, for the last
+six Ex Dates, the close before and on the Ex Date, whether the drop was bigger than the dividend (a dividend trap
+event) and how many trading days the price took to get back. Yahoo dividend dates match TradingView's Ex Dates.
 
 ## When something breaks
 
