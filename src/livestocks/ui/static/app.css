@@ -163,7 +163,8 @@ td.r .act { margin-left: 2px; }
 
 /* detail page */
 .crumb { display: flex; align-items: center; gap: 8px; color: var(--muted); }
-.crumb button { background: none; border: 0; color: var(--accent); padding: 0; }
+.crumb button, .crumb a { background: none; border: 0; color: var(--accent); padding: 0; text-decoration: none; }
+.crumb a:hover { text-decoration: underline; }
 .dhead { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
 .dhead .big { font-family: var(--mono); font-size: 34px; font-weight: 500; letter-spacing: -.02em; line-height: 1.1; }
 .dgrid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }

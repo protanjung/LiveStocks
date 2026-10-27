@@ -9,6 +9,7 @@ from html import escape
 
 from livestocks.domain import CalendarEntry, CalendarKind, Dividend
 from livestocks.ui.components import date_short, fmt
+from livestocks.ui.primitives import card, th
 
 HISTORY_ROWS = 8
 MAX_CHIPS = 3  # calendar chips shown per day before the rest collapse into a count
@@ -109,15 +110,14 @@ def calendar_sections(entries: list[CalendarEntry]) -> str:
         if not rows:
             continue
         body = "".join(_row(e) for e in rows)
-        cards.append(
-            '<section class="card">'
-            f'<div class="card-head"><h2>{title}</h2><span class="sub">{len(rows)} · {note}</span></div>'
-            '<div class="tablewrap"><table class="fintable" '
-            f'style="{_TABLE}"><colgroup>{cols}</colgroup><thead><tr>'
-            "<th>Ticker</th><th>Ex-date</th><th class='r'>Pay date</th>"
-            "<th class='r'>Amount</th><th class='r'>Yield</th>"
-            f"</tr></thead><tbody>{body}</tbody></table></div></section>"
+        table = (
+            f'<div class="tablewrap"><table class="fintable" style="{_TABLE}">'
+            f"<colgroup>{cols}</colgroup><thead><tr>"
+            f"{th('Ticker')}{th('Ex-date')}{th('Pay date', classes='r')}"
+            f"{th('Amount', classes='r')}{th('Yield', classes='r')}"
+            f"</tr></thead><tbody>{body}</tbody></table></div>"
         )
+        cards.append(card(title, table, sub=f"{len(rows)} · {note}", label=title, padded=False))
     if not cards:
         return ""
     return '<div style="display:grid;gap:20px">' + "".join(cards) + "</div>"

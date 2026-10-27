@@ -29,6 +29,7 @@ from livestocks.ui.chart import forecast_options
 from livestocks.ui.errors import HANDLED, describe
 from livestocks.ui.financials import fin_table, financial_options
 from livestocks.ui.models import PageState
+from livestocks.ui.primitives import crumb, empty_card, page_title
 from livestocks.ui.seasonals import seasonal_options, seasonal_returns
 from livestocks.ui.theme import FONTS_HEAD, STYLESHEET_HEAD
 
@@ -617,24 +618,24 @@ def register(
         async def body() -> None:
             entries, problem = await load()
             last["sig"] = sig_of(entries)
-            with T("div").classes("crumb"):
-                T("button").on("click", lambda: ui.navigate.to("/")).text = "← Dashboard"
-                T("span").text = "/"
-                T("span").text = "Calendar"
-            with T("div").classes("page-title"):
-                T("h1").text = "Dividend calendar"
-                T("span").classes(
-                    "sub"
-                ).text = f"{exchange} · announced and recent ex-dividend dates"
+            ui.html(crumb(("← Dashboard", "/"), ("Calendar", None)), sanitize=False)
+            ui.html(
+                page_title(
+                    "Dividend calendar", f"{exchange} · announced and recent ex-dividend dates"
+                ),
+                sanitize=False,
+            )
             if not settings.ui_calendar:
-                with T("section").classes("card empty"):
-                    T("h3").text = "Calendar is turned off"
-                    T("p").text = "The dividend calendar is disabled for this server."
+                ui.html(
+                    empty_card(
+                        "Calendar is turned off",
+                        "The dividend calendar is disabled for this server.",
+                    ),
+                    sanitize=False,
+                )
                 return
             if problem is not None:
-                with T("section").classes("card empty"):
-                    T("h3").text = "Calendar unavailable"
-                    T("p").text = problem
+                ui.html(empty_card("Calendar unavailable", problem), sanitize=False)
                 return
             year, month = dv.month_of(date.today(), state.month_offset)
             with T("section").classes("card"):
@@ -655,9 +656,13 @@ def register(
                     ui.html(dv.month_grid(entries, year, month, date.today()), sanitize=False)
             sections = dv.calendar_sections(entries)
             if not sections:
-                with T("section").classes("card empty"):
-                    T("h3").text = "No dividends to show"
-                    T("p").text = f"Nothing announced or paid in the last month on {exchange}."
+                ui.html(
+                    empty_card(
+                        "No dividends to show",
+                        f"Nothing announced or paid in the last month on {exchange}.",
+                    ),
+                    sanitize=False,
+                )
                 return
             ui.html(sections, sanitize=False)
 
