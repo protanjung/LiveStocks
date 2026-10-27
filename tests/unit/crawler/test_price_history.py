@@ -44,6 +44,18 @@ class TestFetchPrices:
             assert await fetch_prices(client, "WAT", "X") == []
 
     @respx.mock
+    async def test_requests_ten_years_of_daily_closes(self):
+        empty = {"chart": {"result": [{"timestamp": [], "indicators": {"quote": [{"close": []}]}}]}}
+        route = respx.get(url__regex=r".*finance/chart.*").mock(
+            return_value=httpx.Response(200, json=empty)
+        )
+
+        async with httpx.AsyncClient() as client:
+            await fetch_prices(client, "IDX", "TLKM")
+
+        assert route.calls.last.request.url.params["range"] == "10y"
+
+    @respx.mock
     async def test_http_error_raises_upstream_error(self):
         respx.get(url__regex=r".*finance/chart.*").mock(return_value=httpx.Response(500))
 

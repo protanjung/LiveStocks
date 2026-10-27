@@ -6,6 +6,8 @@
 
 ::: livestocks.ui.financials
 
+::: livestocks.ui.seasonals
+
 ::: livestocks.ui.models
 
 ::: livestocks.ui.errors
