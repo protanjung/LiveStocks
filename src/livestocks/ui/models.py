@@ -20,3 +20,4 @@ class PageState:
     eps_period: str = "Annual"
     rev_period: str = "Annual"
     day: str | None = None
+    month_offset: int = 0  # months from the current month on the calendar page

@@ -6,6 +6,7 @@ Rendering is delegated to the pure builders in components, chart and financials.
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from datetime import date
 from functools import partial
 from html import escape
 from typing import Any
@@ -635,6 +636,23 @@ def register(
                     T("h3").text = "Calendar unavailable"
                     T("p").text = problem
                 return
+            year, month = dv.month_of(date.today(), state.month_offset)
+            with T("section").classes("card"):
+                with T("div").classes("card-head"):
+                    T("h2").text = dv.month_label(year, month)
+                    with T("div").style("display:flex;gap:8px"):
+                        T("button").classes("btn ghost").on(
+                            "click", partial(shift_month, -1)
+                        ).text = "‹"
+                        if state.month_offset:
+                            T("button").classes("btn ghost").on(
+                                "click", partial(shift_month, -state.month_offset)
+                            ).text = "Today"
+                        T("button").classes("btn ghost").on(
+                            "click", partial(shift_month, 1)
+                        ).text = "›"
+                with T("div").classes("card-body"):
+                    ui.html(dv.month_grid(entries, year, month, date.today()), sanitize=False)
             sections = dv.calendar_sections(entries)
             if not sections:
                 with T("section").classes("card empty"):
@@ -642,6 +660,10 @@ def register(
                     T("p").text = f"Nothing announced or paid in the last month on {exchange}."
                 return
             ui.html(sections, sanitize=False)
+
+        async def shift_month(step: int) -> None:
+            state.month_offset += step
+            await body.refresh()
 
         await shell(state, body.refresh)
         with T("div").classes("wrap"), T("main"):
