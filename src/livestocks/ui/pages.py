@@ -438,7 +438,7 @@ def register(service: ForecastService, suggestions: SuggestionService, settings:
             with T("div").classes("card"):
                 with T("div").classes("card-head"):
                     T("h2").text = "Seasonals"
-                    T("span").classes("sub").text = "10 years · % from prior December close"
+                    T("span").classes("sub").text = "10 years · daily % from prior year-end close"
                 with T("div").classes("card-body"):
                     history = await service.price_history(tid)
                     if seasonal_returns(history):
