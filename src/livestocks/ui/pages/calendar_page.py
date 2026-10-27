@@ -27,8 +27,8 @@ CALENDAR_NOTE = (
 
 def register(deps: Deps) -> None:
     """Define the dividend hunting page and bind it to the calendar service.
-    The page reloads on a timer, and the date in its signature keeps "today" current at midnight.
-    Style, view, filters and selection are kept per tab and change only what is drawn, not the data.
+    The page is split in two: a header that rebuilds rarely, and a workspace that holds the controls,
+    table and detail. Clicks rebuild only the workspace, so the scroll position is kept.
     """
     calendar, settings = deps.calendar, deps.settings
 
@@ -37,6 +37,7 @@ def register(deps: Deps) -> None:
     async def calendar_page() -> None:
         state = new_state()
         last: dict[str, Any] = {"sig": None}
+        current: dict[str, Any] = {"entries": []}
         exchange = settings.default_exchange.upper()
 
         def sig_of(entries: list[CalendarEntry]) -> tuple[Any, ...]:
@@ -66,14 +67,26 @@ def register(deps: Deps) -> None:
 
         async def on_click(e: events.GenericEventArguments) -> None:
             if hunter.apply_action(state, e.args[0], e.args[1]):
-                await body.refresh()
+                await workspace.refresh()
 
         def clickable(html: str) -> None:
             ui.html(html, sanitize=False).on("click", on_click, js_handler=TABLE_CLICK_JS)
 
         @ui.refreshable
+        async def workspace() -> None:
+            entries = current["entries"]
+            style = HuntStyle(state.style)
+            clickable(hunter.controls(style, state.view, state.filters, state.help))
+            if state.view == "month":
+                month_view(entries)
+            else:
+                hunt_view(entries, style)
+            clickable(hunter.howto_card(state.help))
+
+        @ui.refreshable
         async def body() -> None:
             entries, problem = await load()
+            current["entries"] = entries
             last["sig"] = sig_of(entries)
             ui.html(crumb(("← Dashboard", "/"), ("Calendar", None)), sanitize=False)
             ui.html(
@@ -92,13 +105,7 @@ def register(deps: Deps) -> None:
             if problem is not None:
                 ui.html(empty_card("Calendar unavailable", problem), sanitize=False)
                 return
-            style = HuntStyle(state.style)
-            clickable(hunter.controls(style, state.view, state.filters, state.help))
-            if state.view == "month":
-                month_view(entries)
-            else:
-                hunt_view(entries, style)
-            clickable(hunter.howto_card(state.help))
+            await workspace()
 
         def hunt_view(entries: list[CalendarEntry], style: HuntStyle) -> None:
             rows = hunter.ranked(entries, style, state.filters)
@@ -152,7 +159,7 @@ def register(deps: Deps) -> None:
 
         async def shift_month(step: int) -> None:
             state.month_offset += step
-            await body.refresh()
+            await workspace.refresh()
 
         await shell(deps, state, body.refresh)
         with T("div").classes("wrap"), T("main"):
@@ -162,6 +169,8 @@ def register(deps: Deps) -> None:
         async def maybe_refresh() -> None:
             entries, _ = await load()
             if sig_of(entries) != last["sig"]:
-                await body.refresh()
+                last["sig"] = sig_of(entries)
+                current["entries"] = entries
+                await workspace.refresh()
 
         ui.timer(60.0, guarded("calendar refresh", maybe_refresh))
