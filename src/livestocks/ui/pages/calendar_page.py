@@ -71,8 +71,12 @@ def register(deps: Deps) -> None:
             clamp the scroll to the top; restoring the saved offset afterwards keeps the reader in place.
             """
             offset = await ui.run_javascript("window.scrollY")
+            height = await ui.run_javascript("document.documentElement.scrollHeight")
+            await ui.run_javascript(f"document.body.style.minHeight = '{int(height or 0)}px'")
             await workspace.refresh()
-            await ui.run_javascript(f"window.scrollTo(0, {int(offset or 0)})")
+            await ui.run_javascript(
+                f"window.scrollTo(0, {int(offset or 0)}); document.body.style.minHeight = ''"
+            )
 
         async def on_click(e: events.GenericEventArguments) -> None:
             if hunter.apply_action(state, e.args[0], e.args[1]):
