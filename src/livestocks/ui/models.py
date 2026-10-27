@@ -21,3 +21,8 @@ class PageState:
     rev_period: str = "Annual"
     day: str | None = None
     month_offset: int = 0  # months from the current month on the calendar page
+    style: str = "short"  # hunting style on the calendar: "short" or "long"
+    view: str = "hunt"  # calendar view: "hunt" table or "month" grid
+    selected: str | None = None  # EXCHANGE:SYMBOL of the highlighted hunting row
+    filters: frozenset[str] = frozenset()  # names of the active hunting filters
+    help: bool = False  # whether the how-to guide is open

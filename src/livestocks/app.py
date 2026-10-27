@@ -47,6 +47,8 @@ def create_app(settings: Settings = default_settings) -> None:
     async def startup() -> None:
         await store.initialize()
         await updater.start()
+        if settings.ui_calendar:
+            calendar.warm(settings.default_exchange)
 
     async def shutdown() -> None:
         await updater.stop()

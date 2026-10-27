@@ -17,6 +17,15 @@ from livestocks.ui.live import guarded
 from livestocks.ui.models import PageState
 from livestocks.ui.theme import FONTS_HEAD, STYLESHEET_HEAD
 
+# Runs in the browser: one listener turns clicks on data-act elements into server events.
+TABLE_CLICK_JS = (
+    "(e) => {"
+    " const act = e.target.closest('[data-act]');"
+    " if (act) { emit(act.dataset.act, act.dataset.key); return; }"
+    " const row = e.target.closest('tr[data-href]');"
+    " if (row) emit('nav', row.dataset.href);"
+    "}"
+)
 DASHBOARD_NOTE = (
     "Source: TradingView analyst forecasts. Refreshed every {interval}. Not investment advice."
 )

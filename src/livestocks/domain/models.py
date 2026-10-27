@@ -5,6 +5,7 @@ Fixed value sets are StrEnums that compare equal to their plain strings.
 
 from dataclasses import dataclass
 from enum import StrEnum
+from statistics import median
 
 
 class TickerStatus(StrEnum):
@@ -169,6 +170,92 @@ class CalendarKind(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ExDateEvent:
+    """What the price did around one past Ex Date: the close before, on it, and the recovery.
+    cum_close is the close on the trading day before the Ex Date, ex_close the close on the Ex Date.
+    recover_days counts trading days until the close is back at cum_close, None if over 20.
+    """
+
+    ex_date: int  # unix seconds
+    dividend: float
+    cum_close: float
+    ex_close: float
+    recover_days: int | None
+
+    @property
+    def drop(self) -> float:
+        """Return how far the close fell on the Ex Date, in price units.
+        The value is negative when the price rose instead.
+        It is compared with the dividend to tell a trap event from a normal adjustment.
+        """
+        return self.cum_close - self.ex_close
+
+    @property
+    def drop_pct(self) -> float:
+        """Return the Ex Date drop as a percentage of the cum close.
+        A zero cum close gives 0 rather than dividing by zero.
+        Negative values are price rises.
+        """
+        return self.drop / self.cum_close * 100 if self.cum_close else 0.0
+
+    @property
+    def is_trap(self) -> bool:
+        """Return True when the price fell by more than the dividend paid.
+        That is the dividend trap: the holder ends up behind despite the payment.
+        An event with no drop, or a smaller one, is a normal adjustment.
+        """
+        return self.drop > self.dividend
+
+
+@dataclass(frozen=True, slots=True)
+class TrapStats:
+    """The recent Ex Date behaviour of one stock, used to judge dividend trap risk.
+    events holds the last few Ex Dates, newest first; the properties summarise them.
+    A summary needs at least three events, otherwise level is None and the rest are None.
+    """
+
+    events: tuple[ExDateEvent, ...]
+
+    @property
+    def trap_rate(self) -> float | None:
+        """Return the share of events where the drop beat the dividend.
+        The share is a fraction from 0 to 1, and None when there are no events.
+        It feeds the trap level and the score.
+        """
+        if not self.events:
+            return None
+        return sum(e.is_trap for e in self.events) / len(self.events)
+
+    @property
+    def median_drop_pct(self) -> float | None:
+        """Return the median Ex Date drop in percent of the cum close.
+        The median resists one odd event better than the mean does.
+        None when there are no events.
+        """
+        return median(e.drop_pct for e in self.events) if self.events else None
+
+    @property
+    def median_dividend_pct(self) -> float | None:
+        """Return the median dividend in percent of the cum close.
+        Compare it with the median drop to see whether the price usually gives it back.
+        None when there are no events.
+        """
+        divs = [e.dividend / e.cum_close * 100 for e in self.events if e.cum_close]
+        return median(divs) if divs else None
+
+    @property
+    def level(self) -> str | None:
+        """Return the trap risk as 'low', 'med' or 'high', or None with fewer than three events.
+        Low is a trap rate up to 17 %, med up to 34 %, high above that.
+        The rate is noisy per event, so a stock with few events gets no level.
+        """
+        rate = self.trap_rate
+        if rate is None or len(self.events) < 3:
+            return None
+        return "low" if rate <= 0.17 else "med" if rate <= 0.34 else "high"
+
+
+@dataclass(frozen=True, slots=True)
 class CalendarEntry:
     """One row of the market dividend calendar: its Cum, Ex, Recording and Payment dates.
     Dates are unix seconds and amount is per share in the trading currency.
@@ -185,6 +272,36 @@ class CalendarEntry:
     kind: CalendarKind
     cum_date: int | None = None  # last trading day with the right to the dividend
     record_date: int | None = None  # Recording Date
+    price: float | None = None  # last close, in the trading currency
+    change_pct: float | None = None  # today's change in percent
+    avg_volume: float | None = None  # average daily volume over 30 days, in shares
+    sector: str | None = None
+    payout: float | None = None  # dividend payout ratio in percent, best available
+    streak_years: int | None = None  # years in a row the company has paid a dividend
+    growth_years: int | None = None  # years in a row the dividend has grown
+    coverage: float | None = None  # cash dividend coverage ratio
+    trap: TrapStats | None = None
+    record_real: bool = False  # True when record_date came from the feed, not derived
+
+    @property
+    def event_yield(self) -> float | None:
+        """Return this dividend as a percentage of the price, or None without an amount or price.
+        It is what one holding earns from this single payment, before any Ex Date price drop.
+        For a dividend already past its Ex Date the price is the current one, so it is approximate.
+        """
+        if not self.amount or not self.price:
+            return None
+        return self.amount / self.price * 100
+
+    @property
+    def turnover(self) -> float | None:
+        """Return average daily volume times price, the money that changes hands in a day.
+        It measures how easily a position can be bought and sold.
+        None without volume or price.
+        """
+        if not self.avg_volume or not self.price:
+            return None
+        return self.avg_volume * self.price
 
 
 @dataclass(frozen=True, slots=True)

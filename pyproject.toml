@@ -47,6 +47,7 @@ docs = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]  # lets the page tests share fakes with the NiceGUI main file
 
 [tool.ruff]
 line-length = 100

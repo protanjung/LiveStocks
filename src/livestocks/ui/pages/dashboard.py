@@ -12,18 +12,16 @@ from livestocks.domain import TrackedTicker
 from livestocks.ui import components as c
 from livestocks.ui import suggestions as s
 from livestocks.ui.live import guarded, render_or_notice
-from livestocks.ui.pages.common import DASHBOARD_NOTE, Deps, T, footer, new_state, shell
-from livestocks.ui.primitives import card
-
-# Runs in the browser: one listener handles sort, retry, remove and row navigation.
-TABLE_CLICK_JS = (
-    "(e) => {"
-    " const act = e.target.closest('[data-act]');"
-    " if (act) { emit(act.dataset.act, act.dataset.key); return; }"
-    " const row = e.target.closest('tr[data-href]');"
-    " if (row) emit('nav', row.dataset.href);"
-    "}"
+from livestocks.ui.pages.common import (
+    DASHBOARD_NOTE,
+    TABLE_CLICK_JS,
+    Deps,
+    T,
+    footer,
+    new_state,
+    shell,
 )
+from livestocks.ui.primitives import card
 
 
 def register(deps: Deps) -> None:
